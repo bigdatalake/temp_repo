@@ -1,15 +1,20 @@
-import cx_Oracle
+import jaydebeapi
 import os
 
 def connect_to_oracle(username, password, hostname, port, service_name, jar_path):
     # Set the Oracle environment variables
     os.environ['ORACLE_HOME'] = jar_path
     
-    # Create a dsn (Data Source Name) for the Oracle connection
-    dsn = cx_Oracle.makedsn(hostname, port, service_name=service_name)
+    # JDBC connection string
+    conn_str = f"jdbc:oracle:thin:@{hostname}:{port}/{service_name}"
 
-    # Establish the Oracle connection
-    connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
+    # Establish the Oracle connection using jaydebeapi
+    connection = jaydebeapi.connect(
+        "oracle.jdbc.driver.OracleDriver",
+        conn_str,
+        [username, password],
+        jar_path
+    )
 
     return connection
 
