@@ -1,10 +1,8 @@
 import cx_Oracle
-import os
 
 def execute_query(username, password, hostname, port, service_name, query):
-    # Set Oracle Instant Client directory
-    os.environ["ORACLE_HOME"] = r"C:\Oracle\instantclient_19_13"  # Replace with your Instant Client directory
-    os.environ["PATH"] = os.environ["ORACLE_HOME"] + ";" + os.environ["PATH"]
+    # Set the Oracle client library path
+    cx_Oracle.init_oracle_client(lib_dir="/Applications/SQLDeveloper.app/Contents/Resources/jdk/Contents/Home/jdbc/lib")
 
     # Construct the DSN (Data Source Name)
     dsn = cx_Oracle.makedsn(hostname, port, service_name=service_name)
