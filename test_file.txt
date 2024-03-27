@@ -1,1 +1,43 @@
-Hello World from temp_repo/ dir
+import cx_Oracle
+
+def execute_query(username, password, hostname, port, service_name, query):
+    # Construct the DSN (Data Source Name)
+    dsn = cx_Oracle.makedsn(hostname, port, service_name=service_name)
+    
+    # Establish a connection
+    connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
+
+    try:
+        # Create a cursor
+        cursor = connection.cursor()
+        
+        # Execute the query
+        cursor.execute(query)
+        
+        # Fetch all rows
+        rows = cursor.fetchall()
+        
+        # Print the rows
+        for row in rows:
+            print(row)
+            
+    except cx_Oracle.Error as error:
+        print(f"Error occurred: {error}")
+        
+    finally:
+        # Close the cursor and connection
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+# Example usage
+if __name__ == "__main__":
+    username = "YOUR_USERNAME"
+    password = "YOUR_PASSWORD"
+    hostname = "YOUR_HOSTNAME_OR_IP"
+    port = "YOUR_PORT"
+    service_name = "YOUR_SERVICE_NAME"
+    query = "SELECT * FROM YOUR_TABLE_NAME"
+
+    execute_query(username, password, hostname, port, service_name, query)
