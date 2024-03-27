@@ -1,46 +1,58 @@
 import cx_Oracle
+import os
 
-def execute_query(username, password, hostname, port, service_name, query):
-    # Set the Oracle client library path
-    cx_Oracle.init_oracle_client(lib_dir="/Applications/SQLDeveloper.app/Contents/Resources/jdk/Contents/Home/jdbc/lib")
-
-    # Construct the DSN (Data Source Name)
-    dsn = cx_Oracle.makedsn(hostname, port, service_name=service_name)
+def connect_to_oracle(username, password, hostname, port, service_name, jar_path):
+    # Set the Oracle environment variables
+    os.environ['ORACLE_HOME'] = jar_path
     
-    # Establish a connection
+    # Create a dsn (Data Source Name) for the Oracle connection
+    dsn = cx_Oracle.makedsn(hostname, port, service_name=service_name)
+
+    # Establish the Oracle connection
     connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
 
+    return connection
+
+def execute_query(connection, query):
+    # Create a cursor object
+    cursor = connection.cursor()
+
     try:
-        # Create a cursor
-        cursor = connection.cursor()
-        
         # Execute the query
         cursor.execute(query)
-        
-        # Fetch all rows
+
+        # Fetch all rows from the result set
         rows = cursor.fetchall()
+
+        return rows
+    finally:
+        # Close the cursor
+        cursor.close()
+
+if __name__ == '__main__':
+    # Oracle database credentials and connection details
+    username = 'YOUR_USERNAME'
+    password = 'YOUR_PASSWORD'
+    hostname = 'YOUR_HOSTNAME'
+    port = 'YOUR_PORT'  # e.g., '1521'
+    service_name = 'YOUR_SERVICE_NAME'
+    
+    # Path to the ojdbc11.jar file
+    jar_path = '/path/to/ojdbc11.jar'  # Update with your path
+    
+    # Connect to Oracle database
+    connection = connect_to_oracle(username, password, hostname, port, service_name, jar_path)
+    
+    try:
+        # SQL SELECT query
+        query = 'SELECT * FROM YOUR_TABLE_NAME'  # Update with your table name
         
-        # Print the rows
+        # Execute the query
+        rows = execute_query(connection, query)
+        
+        # Print the fetched rows
         for row in rows:
             print(row)
-            
-    except cx_Oracle.Error as error:
-        print(f"Error occurred: {error}")
-        
     finally:
-        # Close the cursor and connection
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-# Example usage
-if __name__ == "__main__":
-    username = "YOUR_USERNAME"
-    password = "YOUR_PASSWORD"
-    hostname = "YOUR_HOSTNAME_OR_IP"
-    port = "YOUR_PORT"
-    service_name = "YOUR_SERVICE_NAME"
-    query = "SELECT * FROM YOUR_TABLE_NAME"
-
-    execute_query(username, password, hostname, port, service_name, query)
+        # Close the connection
+        connection.close()
