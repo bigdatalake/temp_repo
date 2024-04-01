@@ -1,63 +1,132 @@
-import jaydebeapi
-import os
+1. Using pyodbc and Oracle Instant Client:
+Prerequisites:
 
-def connect_to_oracle(username, password, hostname, port, service_name, jar_path):
-    # Set the Oracle environment variables
-    os.environ['ORACLE_HOME'] = jar_path
-    
-    # JDBC connection string
-    conn_str = f"jdbc:oracle:thin:@{hostname}:{port}/{service_name}"
+Install Oracle Instant Client.
+Install pyodbc.
 
-    # Establish the Oracle connection using jaydebeapi
-    connection = jaydebeapi.connect(
-        "oracle.jdbc.driver.OracleDriver",
-        conn_str,
-        [username, password],
-        jar_path
+
+Python Code:
+
+
+import pyodbc
+
+def connect_to_oracle(username, password, hostname, port, service_name):
+    conn_str = (
+        f"DRIVER={{Oracle in instantclient_19_8}};"
+        f"UID={username};"
+        f"PWD={password};"
+        f"SERVER={hostname}:{port}/{service_name}"
     )
-
+    connection = pyodbc.connect(conn_str)
     return connection
 
 def execute_query(connection, query):
-    # Create a cursor object
     cursor = connection.cursor()
-
-    try:
-        # Execute the query
-        cursor.execute(query)
-
-        # Fetch all rows from the result set
-        rows = cursor.fetchall()
-
-        return rows
-    finally:
-        # Close the cursor
-        cursor.close()
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
 
 if __name__ == '__main__':
-    # Oracle database credentials and connection details
     username = 'YOUR_USERNAME'
     password = 'YOUR_PASSWORD'
     hostname = 'YOUR_HOSTNAME'
-    port = 'YOUR_PORT'  # e.g., '1521'
+    port = 'YOUR_PORT'
     service_name = 'YOUR_SERVICE_NAME'
     
-    # Path to the ojdbc11.jar file
-    jar_path = '/path/to/ojdbc11.jar'  # Update with your path
-    
-    # Connect to Oracle database
-    connection = connect_to_oracle(username, password, hostname, port, service_name, jar_path)
+    connection = connect_to_oracle(username, password, hostname, port, service_name)
     
     try:
-        # SQL SELECT query
-        query = 'SELECT * FROM YOUR_TABLE_NAME'  # Update with your table name
-        
-        # Execute the query
+        query = 'SELECT * FROM YOUR_TABLE_NAME'
         rows = execute_query(connection, query)
-        
-        # Print the fetched rows
         for row in rows:
             print(row)
     finally:
-        # Close the connection
         connection.close()
+
+----------------------------------------------------------------------
+
+2. Using SQLAlchemy with cx_Oracle:
+Prerequisites:
+
+Install SQLAlchemy.
+Install cx_Oracle.
+Python Code:
+
+
+from sqlalchemy import create_engine, text
+
+def connect_to_oracle(username, password, hostname, port, service_name):
+    dsn_str = f"oracle+cx_oracle://{username}:{password}@{hostname}:{port}/{service_name}"
+    engine = create_engine(dsn_str)
+    return engine
+
+def execute_query(engine, query):
+    with engine.connect() as connection:
+        result = connection.execute(text(query))
+        rows = result.fetchall()
+    return rows
+
+if __name__ == '__main__':
+    username = 'YOUR_USERNAME'
+    password = 'YOUR_PASSWORD'
+    hostname = 'YOUR_HOSTNAME'
+    port = 'YOUR_PORT'
+    service_name = 'YOUR_SERVICE_NAME'
+    
+    engine = connect_to_oracle(username, password, hostname, port, service_name)
+    
+    try:
+        query = 'SELECT * FROM YOUR_TABLE_NAME'
+        rows = execute_query(engine, query)
+        for row in rows:
+            print(row)
+    finally:
+        engine.dispose()
+
+----------------------------------------------------------------------
+
+3. Using pyodbc and pyodbc-azure (for Oracle on Azure):
+Prerequisites:
+
+Install pyodbc.
+Install pyodbc-azure.
+Python Code:
+
+
+import pyodbc
+
+def connect_to_oracle(username, password, hostname, port, service_name):
+    conn_str = (
+        f"DRIVER={{Oracle in instantclient_19_8}};"
+        f"UID={username};"
+        f"PWD={password};"
+        f"SERVER={hostname}:{port}/{service_name}"
+    )
+    connection = pyodbc.connect(conn_str)
+    return connection
+
+def execute_query(connection, query):
+    cursor = connection.cursor()
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
+
+if __name__ == '__main__':
+    username = 'YOUR_USERNAME'
+    password = 'YOUR_PASSWORD'
+    hostname = 'YOUR_HOSTNAME'
+    port = 'YOUR_PORT'
+    service_name = 'YOUR_SERVICE_NAME'
+    
+    connection = connect_to_oracle(username, password, hostname, port, service_name)
+    
+    try:
+        query = 'SELECT * FROM YOUR_TABLE_NAME'
+        rows = execute_query(connection, query)
+        for row in rows:
+            print(row)
+    finally:
+        connection.close()
+----------------------------------------------------------------------
