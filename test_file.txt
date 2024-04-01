@@ -58,4 +58,7 @@ if __name__ == '__main__':
             for row in rows:
                 print(row)
         finally:
-            connection.close(
+            connection.close()
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
