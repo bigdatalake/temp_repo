@@ -1,25 +1,61 @@
-/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 /Users/vuppupra/src/datapipeline.metadata-lineage/test/python_oracle_jdbc.py 
-Traceback (most recent call last):
-  File "org.jpype.manager.TypeManager.java", line -1, in org.jpype.manager.TypeManager.findClassByName
-Exception: Java Exception
+import jaydebeapi
+import os
 
-The above exception was the direct cause of the following exception:
+def check_java_version():
+    java_version = jaydebeapi._java_get_version()
+    print(f"Java Version: {java_version}")
 
-Traceback (most recent call last):
-  File "/Users/vuppupra/src/datapipeline.metadata-lineage/test/python_oracle_jdbc.py", line 52, in <module>
-    connection = connect_to_oracle(username, password, hostname, port, service_name, jar_path)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/vuppupra/src/datapipeline.metadata-lineage/test/python_oracle_jdbc.py", line 13, in connect_to_oracle
+    major_version = int(java_version.split('.')[1])
+    if major_version < 11:
+        raise RuntimeError("Java version should be 11 or higher.")
+
+def set_java_environment(jdk_path):
+    os.environ['JAVA_HOME'] = jdk_path
+    os.environ['PATH'] = f"{os.environ['JAVA_HOME']}\\bin;" + os.environ['PATH']
+
+def connect_to_oracle(username, password, hostname, port, service_name, jar_path):
+    conn_str = (
+        f"jdbc:oracle:thin:@{hostname}:{port}/{service_name}"
+    )
+
     connection = jaydebeapi.connect(
-                 ^^^^^^^^^^^^^^^^^^^
-  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/jaydebeapi/__init__.py", line 412, in connect
-    jconn = _jdbc_connect(jclassname, url, driver_args, jars, libs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/jaydebeapi/__init__.py", line 221, in _jdbc_connect_jpype
-    jpype.JClass(jclassname)
-  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/jpype/_jclass.py", line 99, in __new__
-    return _jpype._getClass(jc)
-           ^^^^^^^^^^^^^^^^^^^^
-java.lang.java.lang.UnsupportedClassVersionError: java.lang.UnsupportedClassVersionError: oracle/jdbc/driver/OracleDriver has been compiled by a more recent version of the Java Runtime (class file version 55.0), this version of the Java Runtime only recognizes class file versions up to 52.0
+        "oracle.jdbc.driver.OracleDriver",
+        conn_str,
+        [username, password],
+        jar_path
+    )
 
-Process finished with exit code 1
+    return connection
+
+def execute_query(connection, query):
+    cursor = connection.cursor()
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
+
+if __name__ == '__main__':
+    try:
+        # Check Java version
+        check_java_version()
+
+        # Set Java environment
+        jdk_path = 'C:\\path\\to\\jdk'  # Update with your JDK path
+        set_java_environment(jdk_path)
+
+        username = 'YOUR_USERNAME'
+        password = 'YOUR_PASSWORD'
+        hostname = 'YOUR_HOSTNAME'
+        port = 'YOUR_PORT'
+        service_name = 'YOUR_SERVICE_NAME'
+        jar_path = '/path/to/ojdbc11.jar'  # Update with your ojdbc11.jar path
+
+        connection = connect_to_oracle(username, password, hostname, port, service_name, jar_path)
+        
+        try:
+            query = 'SELECT * FROM YOUR_TABLE_NAME'
+            rows = execute_query(connection, query)
+            for row in rows:
+                print(row)
+        finally:
+            connection.close(
