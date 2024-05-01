@@ -1,14 +1,27 @@
-import re
+import requests
 
-sql_query = """
-SELECT column1, column2
-FROM table1
-WHERE column3 = (SELECT column4 FROM table2 WHERE condition)
-"""
+def make_api_call(url, username, password):
+    # Create authentication token using username and password
+    auth = (username, password)
 
-pattern = r'\((SELECT .*?FROM .*?WHERE .*?\)|SELECT .*?FROM .*?WHERE .*?\))'
+    try:
+        # Make GET request with authentication
+        response = requests.get(url, auth=auth)
 
-matches = re.findall(pattern, sql_query, re.IGNORECASE | re.DOTALL)
+        # Check if request was successful (status code 200)
+        if response.status_code == 200:
+            # Print the response content
+            print("Response:", response.text)
+        else:
+            print("Error:", response.status_code)
 
-for match in matches:
-    print(match.strip())
+    except requests.exceptions.RequestException as e:
+        print("Error making API call:", e)
+
+# Example usage
+if __name__ == "__main__":
+    url = "https://api.example.com/data"
+    username = "your_username"
+    password = "your_password"
+
+    make_api_call(url, username, password)
