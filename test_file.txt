@@ -1,27 +1,35 @@
 import requests
+from bs4 import BeautifulSoup
+import re
 
-def make_api_call(url, username, password):
-    # Create authentication token using username and password
-    auth = (username, password)
-
+def find_api_url(website_url):
     try:
-        # Make GET request with authentication
-        response = requests.get(url, auth=auth)
+        # Send a GET request to the website
+        response = requests.get(website_url)
 
-        # Check if request was successful (status code 200)
+        # Check if request was successful
         if response.status_code == 200:
-            # Print the response content
-            print("Response:", response.text)
+            # Parse the HTML content of the website
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Find all <a> tags with href attributes
+            links = soup.find_all('a', href=True)
+
+            # Filter out links that might resemble API endpoints
+            api_endpoints = [link['href'] for link in links if re.search(r'(api|json)', link['href'], re.IGNORECASE)]
+
+            # Print the potential API endpoints found
+            print("Potential API endpoints:")
+            for api_endpoint in api_endpoints:
+                print(api_endpoint)
+
         else:
             print("Error:", response.status_code)
 
     except requests.exceptions.RequestException as e:
-        print("Error making API call:", e)
+        print("Error making request:", e)
 
 # Example usage
 if __name__ == "__main__":
-    url = "https://api.example.com/data"
-    username = "your_username"
-    password = "your_password"
-
-    make_api_call(url, username, password)
+    website_url = "https://example.com"
+    find_api_url(website_url)
