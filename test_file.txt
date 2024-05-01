@@ -2,10 +2,10 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-def find_api_url(website_url):
+def find_api_url(website_url, username, password):
     try:
-        # Send a GET request to the website
-        response = requests.get(website_url)
+        # Send a GET request to the website with authentication
+        response = requests.get(website_url, auth=(username, password))
 
         # Check if request was successful
         if response.status_code == 200:
@@ -32,4 +32,6 @@ def find_api_url(website_url):
 # Example usage
 if __name__ == "__main__":
     website_url = "https://example.com"
-    find_api_url(website_url)
+    username = "your_username"
+    password = "your_password"
+    find_api_url(website_url, username, password)
