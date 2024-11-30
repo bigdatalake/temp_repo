@@ -1,37 +1,158 @@
-import requests
-from bs4 import BeautifulSoup
-import re
+import streamlit as st
+import pandas as pd
+import altair as alt
+from query_utils import fetch_data
 
-def find_api_url(website_url, username, password):
-    try:
-        # Send a GET request to the website with authentication
-        response = requests.get(website_url, auth=(username, password))
+# Sample DataFrame for testing
+def get_sample_data():
+    """Create a sample DataFrame for testing."""
+    sample_data = {
+        "id": ["001", "002", "003", "004", "004"],
+        "business_date": ["2024-11-01", "2024-11-02", "2024-11-03", "2024-11-04", "2024-11-05"],
+        "status": ["Success", "Success", "FAILED", "Success", "Success"],
+        "start_time": ["2024-11-01 01:00", "2024-11-01 02:00", "2024-11-01 03:00", "2024-11-01 04:00", "2024-11-02 05:00"],
+        "end_time": ["2024-11-02 02:00", "2024-11-01 03:00", "2024-11-04 04:00", "2024-11-03 05:00", "2024-11-05 06:00"],
+        "execution_time": [2, 1, 4, 3, 5],
+    }
+    return pd.DataFrame(sample_data)
 
-        # Check if request was successful
-        if response.status_code == 200:
-            # Parse the HTML content of the website
-            soup = BeautifulSoup(response.text, 'html.parser')
+# Dashboard Title
+st.title("Oracle Table Dashboard")
 
-            # Find all <a> tags with href attributes
-            links = soup.find_all('a', href=True)
+# Development Mode Toggle
+dev_mode = st.sidebar.checkbox("Use Sample Data for Testing", value=False)
 
-            # Filter out links that might resemble API endpoints
-            api_endpoints = [link['href'] for link in links if re.search(r'(api|json)', link['href'], re.IGNORECASE)]
+# Query Options
+QUERY_OPTIONS = {
+    "By Business Date": "SELECT * FROM your_table WHERE business_date = ?",
+    "By Business Date and ID": "SELECT * FROM your_table WHERE business_date = ? AND id = ?",
+    "By Business Date Range": "SELECT * FROM your_table WHERE business_date BETWEEN ? AND ?"
+}
 
-            # Print the potential API endpoints found
-            print("Potential API endpoints:")
-            for api_endpoint in api_endpoints:
-                print(api_endpoint)
-
+# Get Data Function
+def get_data(query_type, params):
+    if dev_mode:
+        df = get_sample_data()
+        if query_type == "By Business Date":
+            return df[df["business_date"] == params[0]]
+        elif query_type == "By Business Date and ID":
+            return df[(df["business_date"] == params[0]) & (df["id"] == params[1])]
+        elif query_type == "By Business Date Range":
+            from_date, to_date = params
+            return df[(df["business_date"] >= from_date) & (df["business_date"] <= to_date)]
         else:
-            print("Error:", response.status_code)
+            return df
+    else:
+        query = QUERY_OPTIONS[query_type]
+        data, columns = fetch_data(query, params)
+        return pd.DataFrame(data, columns=columns)
 
-    except requests.exceptions.RequestException as e:
-        print("Error making request:", e)
+# Sidebar Inputs
+query_type = st.sidebar.radio("Select Query Type", list(QUERY_OPTIONS.keys()))
 
-# Example usage
-if __name__ == "__main__":
-    website_url = "https://example.com"
-    username = "your_username"
-    password = "your_password"
-    find_api_url(website_url, username, password)
+# Form Inputs
+if query_type == "By Business Date":
+    business_date = st.sidebar.date_input("Business Date")
+    params = [str(business_date)]
+elif query_type == "By Business Date and ID":
+    business_date = st.sidebar.date_input("Business Date")
+    record_id = st.sidebar.text_input("ID")
+    params = [str(business_date), record_id]
+elif query_type == "By Business Date Range":
+    from_date = st.sidebar.date_input("From Date")
+    to_date = st.sidebar.date_input("To Date")
+    params = [str(from_date), str(to_date)]
+
+# Fetch Data
+if st.sidebar.button("Fetch Data"):
+    st.session_state.data = get_data(query_type, params)
+
+# Process and Display Data
+if "data" in st.session_state and st.session_state.data is not None:
+    data = st.session_state.data
+
+    # Filter Options
+    selected_id = st.sidebar.selectbox("Filter by ID", options=["All"] + list(data["id"].unique()))
+    selected_status = st.sidebar.selectbox("Filter by Status", options=["All"] + list(data["status"].unique()))
+    time_range = st.sidebar.slider("Filter by Execution Time", min_value=0, max_value=int(data["execution_time"].max()), value=(0, int(data["execution_time"].max())))
+
+    # Apply Filters
+    filtered_data = data
+    if selected_id != "All":
+        filtered_data = filtered_data[filtered_data["id"] == selected_id]
+    if selected_status != "All":
+        filtered_data = filtered_data[filtered_data["status"] == selected_status]
+    filtered_data = filtered_data[
+        (filtered_data["execution_time"] >= time_range[0]) &
+        (filtered_data["execution_time"] <= time_range[1])
+    ]
+
+    # Export Data
+    st.download_button(
+        label="Download Data as CSV",
+        data=filtered_data.to_csv(index=False),
+        file_name="filtered_data.csv",
+        mime="text/csv"
+    )
+
+    # Metrics
+    st.markdown("### Metrics")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Records", len(filtered_data))
+    col2.metric("Success Count", len(filtered_data[filtered_data["status"] == "Success"]))
+    col3.metric("Failed Count", len(filtered_data[filtered_data["status"] == "FAILED"]))
+    col4.metric("Avg Execution Time", round(filtered_data["execution_time"].mean(), 2))
+
+    # Trend Analysis
+    st.markdown("### Execution Time Trend")
+    trend_chart = alt.Chart(filtered_data).mark_line().encode(
+        x="business_date:T",
+        y="execution_time:Q",
+        color="status:N",
+        tooltip=["business_date:T", "execution_time:Q", "status:N"]
+    ).properties(title="Execution Time Trend")
+    st.altair_chart(trend_chart, use_container_width=True)
+
+    # Most Common Start and End Times Trend Analysis
+    st.markdown("### Most Common Start and End Times by ID")
+    time_data = filtered_data.melt(id_vars=["id"], value_vars=["start_time", "end_time"], var_name="time_type", value_name="time")
+    time_data["time"] = pd.to_datetime(time_data["time"])
+    time_chart = alt.Chart(time_data).mark_bar().encode(
+        x="time:T",
+        y="id:N",
+        color="time_type:N",
+        tooltip=["id:N", "time:T", "time_type:N"]
+    ).properties(title="Most Common Times by ID")
+    st.altair_chart(time_chart, use_container_width=True)
+
+    # Heatmap
+    st.markdown("### Heatmap of Execution Times")
+    heatmap_data = filtered_data.pivot_table(index="business_date", columns="id", values="execution_time", aggfunc="mean").fillna(0)
+    st.dataframe(heatmap_data.style.background_gradient(cmap="coolwarm"))
+
+    # Detailed Data
+    st.markdown("### Filtered Data")
+    st.dataframe(filtered_data.style.applymap(
+        lambda x: "background-color: green; color: white;" if x == "Success" else (
+            "background-color: red; color: white;" if x == "FAILED" else "")
+        , subset=["status"]
+    ), use_container_width=True)
+
+    # ------Most Common Start and End Times Trend Analysis
+    st.markdown("### Most Common Start and End Times by ID")
+    time_data = filtered_data.melt(id_vars=["id"], value_vars=["start_time", "end_time"], var_name="time_type",
+                                   value_name="time")
+    time_data["time"] = pd.to_datetime(time_data["time"])
+
+    # Create a line chart with color coding for time_type (start_time vs end_time)
+    time_chart = alt.Chart(time_data).mark_line().encode(
+        x="time:T",
+        y="id:N",
+        color="time_type:N",  # Differentiate between start_time and end_time
+        strokeDash="time_type:N",  # Make start_time and end_time appear as solid and dashed lines for distinction
+        tooltip=["id:N", "time:T", "time_type:N"]
+    ).properties(
+        title="Most Common Start and End Times by ID"
+    )
+
+    st.altair_chart(time_chart, use_container_width=True)
