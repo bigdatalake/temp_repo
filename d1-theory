@@ -1,0 +1,249 @@
+This code implements an **ETL Job Execution Monitoring Dashboard** using **Streamlit**, **pandas**, **Altair**, **networkx**, and **matplotlib**. It allows users to query job data, filter it, view job execution trends, and visualize dependencies between jobs. Let’s walk through the code line by line:
+
+---
+
+### **Imports**
+
+```python
+import streamlit as st
+import pandas as pd
+import altair as alt
+import networkx as nx
+import matplotlib.pyplot as plt
+from query_utils import fetch_data
+```
+
+- **`streamlit as st`**: Imports the Streamlit library for building interactive dashboards.
+- **`pandas as pd`**: Imports pandas for data manipulation and handling.
+- **`altair as alt`**: Imports Altair for creating charts and visualizations.
+- **`networkx as nx`**: Imports NetworkX for creating and analyzing graphs (used for job dependencies).
+- **`matplotlib.pyplot as plt`**: Imports Matplotlib for generating and displaying the job dependency graph.
+- **`fetch_data`**: A custom utility to fetch data from a database or API, defined in a separate `query_utils` module.
+
+---
+
+### **Sample Data Creation Function**
+
+```python
+def get_sample_data():
+    """Create a sample DataFrame for testing."""
+    sample_data = {
+        "job_id": ["001", "001", "001", "001", "001"] + ["002", "002", "002", "002", "002"] + ["003"] + ["004"],
+        "business_date": ["2024-12-01", "2024-12-02", "2024-12-03", "2024-12-04", "2024-12-05"] + ["2024-12-01", "2024-12-02", "2024-12-03", "2024-12-04", "2024-12-05"] + ["2024-12-01"] + ["2024-12-01"],
+        "status": ["Success", "Success", "Success", "Success", "Success"] + ["Success", "Success", "Success", "FAILED", "FAILED"] + ["FAILED"] + ["Success"],
+        "start_time": ["2024-12-01 15:00:00", "2024-12-02 15:00:00", "2024-12-03 15:50:00", "2024-12-04 15:00:00", "2024-12-05 15:30:00"]  + ["2024-12-01 15:00:00", "2024-12-02 15:00:00", "2024-12-03 15:00:00", "2024-12-04 15:00:00", "2024-12-05 15:00:00"] + ["2024-12-01 18:00:00"] + ["2024-12-01 02:00:00"],
+        "end_time": ["2024-12-01 15:10:00", "2024-12-02 15:15:00", "2024-12-03 16:10:00", "2024-12-04 15:12:00", "2024-12-05 15:41:00"] + ["2024-12-01 16:00:00", "2024-12-02 15:25:00", "2024-12-03 15:20:00", "2024-12-04 15:05:00", "2024-12-05 15:55:00"] + ["2024-12-05 19:01:00"] + ["2024-12-05 02:13:00"],
+        "execution_time": [10, 15, 20, 12, 11] + [60, 25, 20, 5, 55] + [61] + [13]
+    }
+    return pd.DataFrame(sample_data)
+```
+
+- **`get_sample_data()`**: This function generates a **sample DataFrame** with job execution data for testing purposes. The data includes columns like `job_id`, `business_date`, `status`, `start_time`, `end_time`, and `execution_time`.
+
+---
+
+### **Streamlit Dashboard Setup**
+
+```python
+# Dashboard Title
+st.title("ETL JOB Execution Monitoring Dashboard")
+```
+
+- **`st.title()`**: Sets the main title of the Streamlit dashboard.
+
+```python
+# Development Mode Toggle
+dev_mode = st.sidebar.checkbox("Use Sample Data for Testing", value=False)
+```
+
+- **`st.sidebar.checkbox()`**: Adds a checkbox in the sidebar to toggle between using sample data or querying from a live database. The default value is `False` (use live data).
+
+```python
+# Tabs for main dashboard and dependency graph
+tab1, tab2 = st.tabs(["Main Dashboard", "Job Dependency Graph"])
+```
+
+- **`st.tabs()`**: Creates two tabs in the Streamlit app: **Main Dashboard** and **Job Dependency Graph**.
+
+---
+
+### **Main Dashboard (Tab 1)**
+
+```python
+with tab1:
+    # Query Options
+    QUERY_OPTIONS = {
+        "By Business Date": "SELECT * FROM your_table WHERE business_date = ?",
+        "By Business Date and Job ID": "SELECT * FROM your_table WHERE business_date = ? AND job_id = ?",
+        "By Business Date Range": "SELECT * FROM your_table WHERE business_date BETWEEN ? AND ?"
+    }
+```
+
+- **`QUERY_OPTIONS`**: A dictionary that contains SQL queries based on the user's filter criteria: by business date, by business date and job ID, or by a date range.
+
+```python
+    # Get Data Function
+    def get_data(query_type, params):
+        if dev_mode:
+            df = get_sample_data()
+            ...
+```
+
+- **`get_data()`**: This function fetches data based on the selected query type (`By Business Date`, etc.) and parameters. If `dev_mode` is enabled, it uses the sample data function `get_sample_data()`. If not, it fetches data from the live database using the `fetch_data` utility.
+
+```python
+    # Sidebar Inputs for Main Dashboard
+    st.sidebar.markdown(" #### <u>Dashboard Inputs</u>", unsafe_allow_html=True)
+```
+
+- **`st.sidebar.markdown()`**: Adds a title in the sidebar for the input section.
+
+```python
+    # Sidebar Inputs
+    query_type = st.sidebar.radio("Select Query Type", list(QUERY_OPTIONS.keys()))
+```
+
+- **`st.sidebar.radio()`**: Displays a radio button for selecting the query type (Business Date, Business Date & Job ID, or Date Range).
+
+```python
+    # Form Inputs
+    if query_type == "By Business Date":
+        business_date = st.sidebar.date_input("Business Date")
+        params = [str(business_date)]
+    ...
+```
+
+- **`st.sidebar.date_input()`**: Displays the form inputs in the sidebar for the user to select a date (or date range) based on the chosen query type.
+
+```python
+    # Fetch Data
+    if st.sidebar.button("Fetch Data"):
+        st.session_state.data = get_data(query_type, params)
+```
+
+- **`st.sidebar.button()`**: When clicked, this button triggers the `get_data()` function to fetch the data based on the query type and inputs, and stores it in the session state.
+
+```python
+    # Process and Display Data
+    if "data" in st.session_state and st.session_state.data is not None:
+        data = st.session_state.data
+```
+
+- **`st.session_state`**: Checks if the data has been fetched and is available in the session.
+
+```python
+        if data.empty:  # Check if the DataFrame is empty
+            st.warning("No data available for the selected criteria. Please change your selection.")
+```
+
+- **`data.empty`**: Checks if the fetched DataFrame is empty and displays a warning if no data matches the filters.
+
+```python
+            # Convert timestamps to datetime and extract hour for visualization
+            data["start_time"] = pd.to_datetime(data["start_time"])
+            ...
+```
+
+- **`pd.to_datetime()`**: Converts the `start_time` and `end_time` columns to datetime objects. The `start_hour` and `end_hour` are then extracted for visualization purposes.
+
+```python
+            # Filter Options
+            selected_id = st.sidebar.selectbox("Filter by Job ID", options=["All"] + list(data["job_id"].unique()))
+            ...
+```
+
+- **`st.sidebar.selectbox()`**: Adds dropdown filters for **Job ID**, **Status**, and **Execution Time**.
+
+```python
+            # Apply Filters
+            filtered_data = data
+            ...
+```
+
+- **Filtering Logic**: Applies the selected filters (Job ID, Status, Execution Time) to the data.
+
+```python
+            # Export Data
+            st.download_button(
+                label="Download Data as CSV",
+                data=filtered_data.to_csv(index=False),
+                file_name="filtered_data.csv",
+                mime="text/csv"
+            )
+```
+
+- **`st.download_button()`**: Adds a button to download the filtered data as a CSV file.
+
+```python
+            # Metrics
+            st.markdown("### Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Records", len(filtered_data))
+            ...
+```
+
+- **`st.columns()`**: Displays metrics like
+
+ **Total Records**, **Success Count**, **Failed Count**, and **Average Execution Time**.
+
+```python
+            # Execution Trend Visualization
+            st.markdown("### Job Execution Trend (By Hour)")
+            ...
+```
+
+- **Altair Chart**: Displays a bar chart showing the number of jobs executed per hour.
+
+```python
+            # Heatmap
+            st.markdown("### Heatmap of Execution Times")
+            heatmap_data = filtered_data.pivot_table(index="job_id", columns="status", values="execution_time", aggfunc="mean")
+            st.dataframe(heatmap_data)
+```
+
+- **Heatmap**: Displays a heatmap showing the average execution times for each job ID by status.
+
+---
+
+### **Job Dependency Graph (Tab 2)**
+
+```python
+with tab2:
+    # Sample DataFrame for dependent jobs
+    def get_dependent_jobs():
+        ...
+```
+
+- **`get_dependent_jobs()`**: Generates a sample DataFrame of job dependencies (`job_id` and `dependent_job_id`).
+
+```python
+    # Sidebar Inputs for Job Dependency Graph
+    show_all_jobs = st.sidebar.checkbox("Show All Jobs", value=True)
+```
+
+- **`show_all_jobs`**: A checkbox for displaying all jobs or filtering by specific job IDs.
+
+```python
+    # Generate Dependency Graph if submitted
+    if submitted:
+        st.markdown("### Job Dependency Graph")
+        G = nx.DiGraph()
+        ...
+```
+
+- **NetworkX Graph**: Creates a directed graph using **NetworkX** where job dependencies are represented as edges. A dependency graph is generated and displayed using **Matplotlib**.
+
+```python
+        st.pyplot(fig)
+```
+
+- **`st.pyplot()`**: Displays the generated job dependency graph in the Streamlit app.
+
+---
+
+### **Conclusion**
+
+- **Tab 1** allows users to query job data, apply filters, view execution trends, and download the results.
+- **Tab 2** allows users to visualize job dependencies in a directed graph, with options for customizing the depth and highlighting dependencies.
+
+This code offers an interactive platform for monitoring and analyzing ETL job executions and their dependencies.
