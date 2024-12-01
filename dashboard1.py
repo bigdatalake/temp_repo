@@ -54,6 +54,11 @@ with tab1:
             data, columns = fetch_data(query, params)
             return pd.DataFrame(data, columns=columns) if data else pd.DataFrame()  # Return empty DataFrame if no data
 
+    # Sidebar Inputs for Main Dashboard
+    #st.sidebar.markdown("#### Dashboard Inputs")  # Add a title for this section
+    st.sidebar.markdown(" #### <u>Dashboard Inputs</u>", unsafe_allow_html=True)
+
+
     # Sidebar Inputs
     query_type = st.sidebar.radio("Select Query Type", list(QUERY_OPTIONS.keys()))
 
