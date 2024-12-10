@@ -1,9 +1,14 @@
+
+"""
+
+"""
 import streamlit as st
 import pandas as pd
 import altair as alt
 import networkx as nx
 import matplotlib.pyplot as plt
 from query_utils import fetch_data
+import textwrap
 
 # Sample DataFrame for testing
 def get_sample_data():
@@ -152,8 +157,9 @@ with tab1:
             heatmap_data = filtered_data.pivot_table(index="business_date", columns="job_id", values="execution_time", aggfunc="mean").fillna(0)
             st.dataframe(heatmap_data)
 
-with tab2:
 
+
+with tab2:
     # Sample DataFrame for dependent jobs
     def get_dependent_jobs():
         """Create a DataFrame for dependent jobs."""
@@ -162,6 +168,11 @@ with tab2:
             "dependent_job_id": ["002", "004", None, None, "001", "005", None, None, "abc"],
         }
         return pd.DataFrame(dependent_jobs_data)
+
+    # Function to wrap node labels into multiple lines if they exceed max_length
+    def wrap_label(label, max_length=10):
+        """Wrap labels to fit within the nodes by splitting long labels into multiple lines."""
+        return "\n".join(textwrap.wrap(label, width=max_length))
 
     # Display Dependent Jobs Data
     st.markdown("### Dependent Jobs Data")
@@ -185,8 +196,8 @@ with tab2:
     with st.form("dependency_graph_form"):
         highlight_dependencies = st.checkbox("Highlight Dependencies", value=True)
         max_depth = st.slider("Max Dependency Depth", min_value=1, max_value=5, value=3)
-        submitted = st.form_submit_button("Generate Graph")
-
+        layout_algo = st.selectbox("Select Graph Layout", options=["spring_layout", "circular_layout", "kamada_kawai_layout"])
+        submitted = st.form_submit_button("Generate Graph")  # Submit button for graph generation
 
     # Apply filtering based on inputs
     if specific_job_ids:  # Check if specific job IDs are selected
@@ -208,14 +219,29 @@ with tab2:
             G.add_edge(row["job_id"], row["dependent_job_id"])
 
         # Create the plot
-        fig, ax = plt.subplots(figsize=(10, 10))            # Size of the graph
-        pos = nx.spring_layout(G)
+        fig, ax = plt.subplots(figsize=(10, 10))  # Size of the graph
+        
+        # Dynamically change the layout based on user input
+        if layout_algo == "spring_layout":
+			#pos = nx.spring_layout(G)
+			#pos = nx.spring_layout(G, k=4, iterations=50, scale=2)  # Adjust 'k' for node distance
+            pos = nx.spring_layout(G, k=1, iterations=50, scale=2)
+        elif layout_algo == "circular_layout":
+            pos = nx.circular_layout(G)
+        elif layout_algo == "kamada_kawai_layout":
+            pos = nx.kamada_kawai_layout(G)
+
+        # Wrapping labels for readability
+        wrapped_labels = {node: wrap_label(node) for node in G.nodes()}
+
+        # Increase node size and adjust font size to fit wrapped labels
         nx.draw(
             G, pos,
             with_labels=True,
-            node_size=3000,
+            labels=wrapped_labels,
+            node_size=5000,  # Increased node size
             node_color="skyblue",
-            font_size=10,
+            font_size=8,  # Adjust font size for wrapped labels
             font_weight="bold",
             ax=ax
         )
