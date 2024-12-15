@@ -1,14 +1,36 @@
-Problem Statement : Currently, more than 100 CR ETL pipelines are running, scheduled to run daily and monthly. However, we lack real-time and historical tracking of these ETL run statistics, key insights and data visualizations. 
+# Calculate count of successes and failures for each job_id
+count_df = filtered_data.groupby(["job_id", "status"]).size().unstack(fill_value=0)
 
-Scope of Initiative : Need a dashboard interface with Oracle as the database to monitor and visualize these ETL job executions and their dependencies. 
+# Calculate success and failure counts
+success_count = count_df.get("Success", 0)
+failure_count = count_df.get("FAILED", 0)
 
-The dashboard should include functionalities for querying ETL job data based on various criteria like ETL ID and business date. It should display results such as execution time, run status, dependencies, average execution time, number of successes or failures, and other statistics in a user-friendly manner, and visualize job dependencies.
+# Calculate total counts per job_id
+total_count = count_df.sum(axis=1)
 
+# Calculate success and failure ratios as percentages
+count_df["success_ratio"] = (success_count / total_count * 100).round(2)
+count_df["failure_ratio"] = (failure_count / total_count * 100).round(2)
 
-Benefits : 
+# Create success_ratio and failure_ratio columns with symbols and color
+count_df["success_ratio_display"] = count_df["success_ratio"].apply(
+    lambda x: f"{x}% ✅" if x > 50 else f"{x}% ❌"
+)
 
- Identifying the long-running jobs, will be helpful for optimizing execution time. Once these jobs move to the cloud, it might save costs.
- Additionally, identifying the times of day when most execution resources are being utilized can help determine if we need to load balance or distribute job start times throughout the day.
- The L3 team can monitor job statuses, until L1 notifies them. This is the best approach for DevSecOps and reduces operational risk. 
- With job dependency visualization, it will be helpful to update the job dependency mode to either hard or soft dependency mode.
- Identify the jobs that frequently fail over a month or so.
+count_df["failure_ratio_display"] = count_df["failure_ratio"].apply(
+    lambda x: f"{x}% ❌" if x > 50 else f"{x}% ✅"
+)
+
+# Apply color coding: green for success and red for failure
+def success_failure_color(val):
+    if "✅" in val:
+        return 'background-color: green; color: white;'
+    elif "❌" in val:
+        return 'background-color: red; color: white;'
+    return ''
+
+# Apply the style to the dataframe
+styled_df = count_df.style.applymap(success_failure_color, subset=["success_ratio_display", "failure_ratio_display"])
+
+# Display the dataframe
+st.dataframe(styled_df, use_container_width=True)
