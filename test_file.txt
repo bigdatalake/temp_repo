@@ -1,7 +1,11 @@
 import os
 import sqlparse
+from bokeh.io import show
+from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, LabelSet, ColumnDataSource
+from bokeh.plotting import figure
+from bokeh.models.graphs import from_networkx, NodesAndLinkedEdges
+from bokeh.palettes import Spectral4
 import networkx as nx
-import matplotlib.pyplot as plt
 
 
 def clean_and_format_sql(file_path):
@@ -69,10 +73,11 @@ def parse_sql(file_path):
     return lineage_graph
 
 
-def visualize_data_lineage(lineage_graph):
+def visualize_data_lineage_with_bokeh(lineage_graph):
     """
-    Visualizes the data lineage using networkx and matplotlib.
+    Visualizes the data lineage using Bokeh.
     """
+    # Create a directed graph
     G = nx.DiGraph()
 
     # Add nodes and edges to the graph
@@ -85,21 +90,33 @@ def visualize_data_lineage(lineage_graph):
                 G.add_edge(join["table"], f"{join['type']} JOIN")
                 G.add_edge(f"{join['type']} JOIN", "QUERY")
 
-    # Visualize the graph
-    plt.figure(figsize=(10, 6))
-    pos = nx.spring_layout(G)  # Use a spring layout for better visualization
-    nx.draw(
-        G,
-        pos,
-        with_labels=True,
-        node_size=3000,
-        node_color="lightblue",
-        font_size=10,
-        font_weight="bold",
-        edge_color="gray",
+    # Create a Bokeh plot
+    plot = figure(
+        title="SQL Data Lineage Visualization",
+        x_range=Range1d(-2, 2),
+        y_range=Range1d(-2, 2),
+        width=800,
+        height=600,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
     )
-    plt.title("SQL Data Lineage Visualization")
-    plt.show()
+
+    # Create a network graph from NetworkX
+    bokeh_graph = from_networkx(G, nx.spring_layout, scale=1, center=(0, 0))
+    bokeh_graph.node_renderer.glyph = Circle(size=15, fill_color=Spectral4[0])
+    bokeh_graph.edge_renderer.glyph = MultiLine(line_width=1, line_color=Spectral4[2])
+
+    # Add hover tools
+    bokeh_graph.node_renderer.hover_glyph = Circle(size=20, fill_color=Spectral4[1])
+    bokeh_graph.edge_renderer.selection_glyph = MultiLine(line_width=2, line_color=Spectral4[3])
+
+    hover = HoverTool(tooltips=[("Node", "@index")])
+    plot.add_tools(hover)
+
+    # Add the graph to the plot
+    plot.renderers.append(bokeh_graph)
+
+    # Display the plot
+    show(plot)
 
 
 # Example usage
@@ -110,6 +127,6 @@ if __name__ == "__main__":
     try:
         lineage_graph = parse_sql(sql_file_path)
         print("Lineage Graph:", lineage_graph)
-        visualize_data_lineage(lineage_graph)
+        visualize_data_lineage_with_bokeh(lineage_graph)
     except Exception as e:
         print(f"Error: {e}")
