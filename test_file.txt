@@ -5,9 +5,6 @@ from sqlparse.tokens import Keyword, DML
 from graphviz import Digraph
 
 def extract_table_name(token):
-    """
-    Extracts table name from a token and resolves aliases if present.
-    """
     if isinstance(token, Identifier):
         real_name = token.get_real_name()
         alias = token.get_alias()
@@ -17,14 +14,11 @@ def extract_table_name(token):
     return None, None
 
 def process_subquery(token):
-    """
-    Processes a subquery to extract its lineage.
-    """
     lineage = {"tables": set(), "joins": [], "conditions": []}
     tokens = token.tokens if isinstance(token, TokenList) else []
 
     for sub_token in tokens:
-        if sub_token.is_group():
+        if sub_token.is_group:
             sub_lineage = ParseSqlFromTokenList(sub_token)
             lineage["tables"].update(sub_lineage["tables"])
             lineage["joins"].extend(sub_lineage["joins"])
@@ -33,9 +27,6 @@ def process_subquery(token):
     return lineage
 
 def ParseSqlFromTokenList(token_list):
-    """
-    Extracts lineage details from a token list.
-    """
     lineage = {"tables": set(), "joins": [], "conditions": []}
 
     tokens = [token for token in token_list.tokens if not token.is_whitespace]
@@ -55,7 +46,7 @@ def ParseSqlFromTokenList(token_list):
             condition = " ".join(t.value for t in condition_tokens if not t.is_whitespace)
             lineage["conditions"].append(condition)
 
-        elif token.is_group():
+        elif token.is_group:  # FIXED: Correct usage of `is_group`
             sub_lineage = process_subquery(token)
             lineage["tables"].update(sub_lineage["tables"])
             lineage["joins"].extend(sub_lineage["joins"])
@@ -64,9 +55,6 @@ def ParseSqlFromTokenList(token_list):
     return lineage
 
 def ParseSql(filePath):
-    """
-    Parses an SQL file to extract detailed data lineage.
-    """
     if not os.path.exists(filePath):
         raise FileNotFoundError(f"File not found: {filePath}")
     
@@ -86,30 +74,22 @@ def ParseSql(filePath):
     return overall_lineage
 
 def visualize_lineage(lineage):
-    """
-    Visualizes the SQL lineage using Graphviz.
-    """
     graph = Digraph("SQL_Lineage", format="png", node_attr={'shape': 'box', 'style': 'rounded'})
 
-    # Add tables as nodes
     for table in lineage["tables"]:
         graph.node(table, table)
 
-    # Add relationships as edges
     for join in lineage["joins"]:
         graph.edge("Main Query", join["table"], label=f"{join['type']} JOIN")
 
-    # Add conditions as nodes
     for i, condition in enumerate(lineage["conditions"], 1):
         condition_node = f"Condition_{i}"
         graph.node(condition_node, f"Condition:\n{condition}", shape="note")
         graph.edge("Main Query", condition_node)
 
-    # Save and render the graph
     graph.render("sql_lineage_graph", view=True)
 
 if __name__ == "__main__":
-    # Sample SQL file path
     sql_file_path = "sample.sql"  # Replace with the actual SQL file path
 
     try:
