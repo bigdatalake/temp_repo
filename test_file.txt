@@ -1,100 +1,106 @@
 import os
 import sqlparse
-from sqlparse.sql import Identifier, IdentifierList, Function, TokenList
-from sqlparse.tokens import Keyword, DML
 from graphviz import Digraph
 
-def extract_table_name(token):
-    if isinstance(token, Identifier):
-        real_name = token.get_real_name()
-        alias = token.get_alias()
-        return real_name, alias
-    elif isinstance(token, IdentifierList):
-        return [extract_table_name(identifier) for identifier in token.get_identifiers()]
-    return None, None
+def clean_sql(sql_code):
+    """
+    Pre-process the SQL code to clean it.
+    This removes comments, normalizes whitespace, and ensures all keywords are uppercase.
+    """
+    cleaned_sql = sqlparse.format(
+        sql_code,
+        strip_comments=True,  # Remove comments
+        keyword_case='upper',  # Convert keywords to uppercase
+        strip_whitespace=True  # Remove unnecessary whitespace
+    )
+    return cleaned_sql
 
-def process_subquery(token):
-    lineage = {"tables": set(), "joins": [], "conditions": []}
-    tokens = token.tokens if isinstance(token, TokenList) else []
+def extract_lineage(cleaned_sql):
+    """
+    Extract data lineage from the cleaned SQL code.
+    """
+    lineage = {
+        "tables": set(),
+        "joins": [],
+        "conditions": []
+    }
 
-    for sub_token in tokens:
-        if sub_token.is_group:
-            sub_lineage = ParseSqlFromTokenList(sub_token)
-            lineage["tables"].update(sub_lineage["tables"])
-            lineage["joins"].extend(sub_lineage["joins"])
-            lineage["conditions"].extend(sub_lineage["conditions"])
-    
-    return lineage
-
-def ParseSqlFromTokenList(token_list):
-    lineage = {"tables": set(), "joins": [], "conditions": []}
-
-    tokens = [token for token in token_list.tokens if not token.is_whitespace]
-    for i, token in enumerate(tokens):
-        if token.ttype is Keyword and token.value.upper() in {"FROM", "JOIN"}:
-            table_token = tokens[i + 1] if i + 1 < len(tokens) else None
-            if table_token:
-                table_name, alias = extract_table_name(table_token)
-                if table_name:
-                    lineage["tables"].add(table_name)
-                    if token.value.upper() == "JOIN":
-                        join_type = tokens[i - 1].value.upper() if i > 0 else "INNER"
-                        lineage["joins"].append({"type": join_type, "table": table_name, "alias": alias})
-
-        elif token.ttype is Keyword and token.value.upper() in {"WHERE", "ON"}:
-            condition_tokens = tokens[i + 1:]
-            condition = " ".join(t.value for t in condition_tokens if not t.is_whitespace)
-            lineage["conditions"].append(condition)
-
-        elif token.is_group:  # FIXED: Correct usage of `is_group`
-            sub_lineage = process_subquery(token)
-            lineage["tables"].update(sub_lineage["tables"])
-            lineage["joins"].extend(sub_lineage["joins"])
-            lineage["conditions"].extend(sub_lineage["conditions"])
-
-    return lineage
-
-def ParseSql(filePath):
-    if not os.path.exists(filePath):
-        raise FileNotFoundError(f"File not found: {filePath}")
-    
-    with open(filePath, "r") as sql_file:
-        sql = sql_file.read()
-    
-    formatted_sql = sqlparse.format(sql, strip_comments=True, keyword_case='upper')
-    parsed = sqlparse.parse(formatted_sql)
-
-    overall_lineage = {"tables": set(), "joins": [], "conditions": []}
+    # Tokenize the cleaned SQL
+    parsed = sqlparse.parse(cleaned_sql)
     for statement in parsed:
-        statement_lineage = ParseSqlFromTokenList(statement)
-        overall_lineage["tables"].update(statement_lineage["tables"])
-        overall_lineage["joins"].extend(statement_lineage["joins"])
-        overall_lineage["conditions"].extend(statement_lineage["conditions"])
+        tokens = [token for token in statement.tokens if not token.is_whitespace]
 
-    return overall_lineage
+        for i, token in enumerate(tokens):
+            token_value = token.value.upper()
+
+            # Handle "FROM" and "JOIN" clauses
+            if token.ttype is sqlparse.tokens.Keyword and token_value in {"FROM", "JOIN"}:
+                table_token = tokens[i + 1] if i + 1 < len(tokens) else None
+                if table_token:
+                    table_name = table_token.get_real_name()
+                    if token_value == "FROM":
+                        lineage["tables"].add(table_name)
+                    elif token_value == "JOIN":
+                        join_type = tokens[i - 1].value.upper() if i > 0 else "INNER"
+                        lineage["joins"].append({"type": join_type, "table": table_name})
+
+            # Handle "WHERE" or "ON" clauses
+            if token.ttype is sqlparse.tokens.Keyword and token_value in {"WHERE", "ON"}:
+                condition_tokens = tokens[i + 1:]
+                condition = " ".join(t.value for t in condition_tokens if not t.is_whitespace)
+                lineage["conditions"].append(condition)
+
+    return lineage
 
 def visualize_lineage(lineage):
+    """
+    Generate a graphical representation of the SQL data lineage.
+    """
     graph = Digraph("SQL_Lineage", format="png", node_attr={'shape': 'box', 'style': 'rounded'})
 
+    # Add tables as nodes
     for table in lineage["tables"]:
         graph.node(table, table)
 
+    # Add joins as edges
     for join in lineage["joins"]:
         graph.edge("Main Query", join["table"], label=f"{join['type']} JOIN")
 
+    # Add conditions as nodes
     for i, condition in enumerate(lineage["conditions"], 1):
         condition_node = f"Condition_{i}"
         graph.node(condition_node, f"Condition:\n{condition}", shape="note")
         graph.edge("Main Query", condition_node)
 
+    # Render the graph
     graph.render("sql_lineage_graph", view=True)
 
+def process_sql_file(sql_file_path):
+    """
+    Main function to process the SQL file, clean it, and extract and visualize the lineage.
+    """
+    if not os.path.exists(sql_file_path):
+        raise FileNotFoundError(f"File not found: {sql_file_path}")
+
+    with open(sql_file_path, "r") as sql_file:
+        sql_code = sql_file.read()
+
+    # Clean the SQL code
+    cleaned_sql = clean_sql(sql_code)
+
+    # Extract lineage
+    lineage = extract_lineage(cleaned_sql)
+
+    # Print the lineage
+    print("Data Lineage:", lineage)
+
+    # Visualize lineage
+    visualize_lineage(lineage)
+
 if __name__ == "__main__":
-    sql_file_path = "sample.sql"  # Replace with the actual SQL file path
+    sql_file_path = "sample.sql"  # Replace with your actual SQL file path
 
     try:
-        lineage = ParseSql(sql_file_path)
-        print("Data Lineage:", lineage)
-        visualize_lineage(lineage)
+        process_sql_file(sql_file_path)
     except FileNotFoundError as e:
         print(e)
