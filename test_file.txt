@@ -1,9 +1,8 @@
 import os
 import sqlparse
 from bokeh.io import show
-from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, LabelSet, ColumnDataSource
+from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, ColumnDataSource, GraphRenderer, StaticLayoutProvider
 from bokeh.plotting import figure
-from bokeh.models.graphs import from_networkx, NodesAndLinkedEdges
 from bokeh.palettes import Spectral4
 import networkx as nx
 
@@ -90,32 +89,39 @@ def visualize_data_lineage_with_bokeh(lineage_graph):
                 G.add_edge(join["table"], f"{join['type']} JOIN")
                 G.add_edge(f"{join['type']} JOIN", "QUERY")
 
-    # Create a Bokeh plot
-    plot = figure(
-        title="SQL Data Lineage Visualization",
-        x_range=Range1d(-2, 2),
-        y_range=Range1d(-2, 2),
-        width=800,
-        height=600,
-        tools="pan,wheel_zoom,box_zoom,reset,save",
+    # Convert the graph into Bokeh's GraphRenderer
+    graph_renderer = GraphRenderer()
+
+    # Create node index mapping
+    node_indices = list(G.nodes())
+    graph_renderer.node_renderer.data_source.add(node_indices, 'index')
+    graph_renderer.node_renderer.data_source.add(
+        [Spectral4[i % 4] for i in range(len(node_indices))], 'color'
     )
+    graph_renderer.node_renderer.glyph = Circle(size=15, fill_color="color")
 
-    # Create a network graph from NetworkX
-    bokeh_graph = from_networkx(G, nx.spring_layout, scale=1, center=(0, 0))
-    bokeh_graph.node_renderer.glyph = Circle(size=15, fill_color=Spectral4[0])
-    bokeh_graph.edge_renderer.glyph = MultiLine(line_width=1, line_color=Spectral4[2])
+    # Define edges
+    start_indices = [list(G.nodes()).index(edge[0]) for edge in G.edges()]
+    end_indices = [list(G.nodes()).index(edge[1]) for edge in G.edges()]
+    graph_renderer.edge_renderer.data_source.data = dict(start=start_indices, end=end_indices)
+    graph_renderer.edge_renderer.glyph = MultiLine(line_color="black", line_alpha=0.8, line_width=1)
 
-    # Add hover tools
-    bokeh_graph.node_renderer.hover_glyph = Circle(size=20, fill_color=Spectral4[1])
-    bokeh_graph.edge_renderer.selection_glyph = MultiLine(line_width=2, line_color=Spectral4[3])
+    # Define layout
+    layout = nx.spring_layout(G)
+    graph_renderer.layout_provider = StaticLayoutProvider(graph_layout=layout)
 
-    hover = HoverTool(tooltips=[("Node", "@index")])
-    plot.add_tools(hover)
+    # Create Bokeh plot
+    plot = Plot(
+        x_range=Range1d(-1.1, 1.1),
+        y_range=Range1d(-1.1, 1.1),
+        title="SQL Data Lineage Visualization",
+        width=800,
+        height=600
+    )
+    plot.add_tools(HoverTool(tooltips=[("Node", "@index")]))
+    plot.renderers.append(graph_renderer)
 
-    # Add the graph to the plot
-    plot.renderers.append(bokeh_graph)
-
-    # Display the plot
+    # Show the plot
     show(plot)
 
 
