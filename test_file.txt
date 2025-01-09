@@ -1,105 +1,115 @@
 import os
 import sqlparse
-import graphviz
+import networkx as nx
+import matplotlib.pyplot as plt
 
 
-def clean_sql(file_path):
+def clean_and_format_sql(file_path):
     """
-    Pre-process the SQL file to clean it.
-    Removes comments, trims whitespace, and ensures all keywords are uppercase.
+    Cleans and formats the SQL file to remove comments and unnecessary whitespaces.
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File does not exist: {file_path}")
+    if os.path.exists(file_path):
+        with open(file_path, "r") as sql_file:
+            sql = sql_file.read()
 
-    with open(file_path, "r") as file:
-        sql_code = file.read()
-
-    cleaned_sql = sqlparse.format(
-        sql_code,
-        strip_comments=True,  # Remove comments
-        keyword_case="upper",  # Convert keywords to uppercase
-        strip_whitespace=True  # Remove unnecessary whitespace
-    )
-    return cleaned_sql
+        # Clean and format SQL
+        formatted_sql = sqlparse.format(
+            sql,
+            strip_comments=True,
+            strip_whitespace=True,
+            reindent=True,
+            keyword_case="upper",
+        )
+        return formatted_sql
+    else:
+        raise FileNotFoundError(f"File not found: {file_path}")
 
 
 def parse_sql(file_path):
     """
-    Extract table names and join conditions from a SQL file.
+    Parses the cleaned SQL file to extract tables, join types, and conditions.
     """
-    cleaned_sql = clean_sql(file_path)
-    table_names = []
-    join_conditions = []
+    sql = clean_and_format_sql(file_path)
+    lines = sql.splitlines()
 
-    # Process cleaned SQL line by line
-    for line in cleaned_sql.splitlines():
+    tables = []  # To store table names
+    joins = []   # To store join types and conditions
+    lineage_graph = {}
+
+    for line in lines:
         tokens = line.strip().split()
+        if not tokens:
+            continue
 
-        # Check for table names in FROM or JOIN clauses
-        if len(tokens) > 1 and ('FROM' in tokens or 'JOIN' in tokens):
+        # Extract tables from FROM clause
+        if "FROM" in tokens:
             try:
-                if "FROM" in tokens:
-                    table_index = tokens.index("FROM") + 1
-                    if table_index < len(tokens):
-                        table_name = tokens[table_index].strip(",").upper()
-                        table_names.append(table_name)
+                table_name = tokens[tokens.index("FROM") + 1].strip(",")
+                tables.append(table_name)
+                if "FROM" not in lineage_graph:
+                    lineage_graph["FROM"] = []
+                lineage_graph["FROM"].append(table_name)
+            except IndexError:
+                pass
 
-                if "JOIN" in tokens:
-                    table_index = tokens.index("JOIN") + 1
-                    if table_index < len(tokens):
-                        table_name = tokens[table_index].strip(",").upper()
-                        table_names.append(table_name)
-
-            except Exception as e:
-                print(f"Error parsing table names: {e}")
-
-        # Check for ON conditions in JOIN clauses
-        if "ON" in tokens:
+        # Extract tables, join types, and conditions from JOIN clause
+        if "JOIN" in tokens:
             try:
-                condition_index = tokens.index("ON") + 1
-                if condition_index < len(tokens):
-                    condition = " ".join(tokens[condition_index:]).strip(",").upper()
-                    join_conditions.append(condition)
-            except Exception as e:
-                print(f"Error parsing join condition: {e}")
+                table_name = tokens[tokens.index("JOIN") + 1].strip(",")
+                join_type = " ".join(tokens[:tokens.index("JOIN")]).strip() or "INNER"
+                condition_index = tokens.index("ON") + 1 if "ON" in tokens else None
+                condition = tokens[condition_index:] if condition_index else []
+                joins.append({"table": table_name, "type": join_type, "condition": " ".join(condition)})
+                if "JOIN" not in lineage_graph:
+                    lineage_graph["JOIN"] = []
+                lineage_graph["JOIN"].append({"table": table_name, "type": join_type, "condition": " ".join(condition)})
+            except IndexError:
+                pass
 
-    return {"tables": table_names, "join_conditions": join_conditions}
+    return lineage_graph
 
 
-def visualize_lineage(lineage):
+def visualize_data_lineage(lineage_graph):
     """
-    Create a visual representation of the SQL data lineage.
+    Visualizes the data lineage using networkx and matplotlib.
     """
-    graph = graphviz.Digraph("SQL_Data_Lineage", format="png")
+    G = nx.DiGraph()
 
-    # Add nodes for tables
-    for table in lineage["tables"]:
-        graph.node(table, shape="box", style="filled", color="lightblue")
+    # Add nodes and edges to the graph
+    for key, values in lineage_graph.items():
+        if key == "FROM":
+            for value in values:
+                G.add_edge("QUERY", value)
+        elif key == "JOIN":
+            for join in values:
+                G.add_edge(join["table"], f"{join['type']} JOIN")
+                G.add_edge(f"{join['type']} JOIN", "QUERY")
 
-    # Add edges for join conditions
-    for condition in lineage["join_conditions"]:
-        # Extract table names from condition for visualization
-        tables_in_condition = [t.strip() for t in condition.split("=") if "." in t]
-        if len(tables_in_condition) == 2:
-            table1, table2 = tables_in_condition
-            graph.edge(table1.split(".")[0], table2.split(".")[0], label=condition)
+    # Visualize the graph
+    plt.figure(figsize=(10, 6))
+    pos = nx.spring_layout(G)  # Use a spring layout for better visualization
+    nx.draw(
+        G,
+        pos,
+        with_labels=True,
+        node_size=3000,
+        node_color="lightblue",
+        font_size=10,
+        font_weight="bold",
+        edge_color="gray",
+    )
+    plt.title("SQL Data Lineage Visualization")
+    plt.show()
 
-    # Render and save the graph
-    graph.render("sql_data_lineage", cleanup=True)
-    print("Visualization saved as 'sql_data_lineage.png'")
 
-
+# Example usage
 if __name__ == "__main__":
-    # Example usage
-    sql_file_path = "sample.sql"  # Replace with the path to your SQL file
+    # Provide the path to your SQL file
+    sql_file_path = "path_to_your_sql_file.sql"
 
     try:
-        lineage = parse_sql(sql_file_path)
-        print("Extracted Lineage:")
-        print("Tables:", lineage["tables"])
-        print("Join Conditions:", lineage["join_conditions"])
-
-        # Visualize the lineage
-        visualize_lineage(lineage)
-    except FileNotFoundError as e:
-        print(e)
+        lineage_graph = parse_sql(sql_file_path)
+        print("Lineage Graph:", lineage_graph)
+        visualize_data_lineage(lineage_graph)
+    except Exception as e:
+        print(f"Error: {e}")
