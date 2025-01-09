@@ -1,7 +1,10 @@
 import os
 import sqlparse
 from bokeh.io import show
-from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, ColumnDataSource, GraphRenderer, StaticLayoutProvider
+from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, StaticLayoutProvider
+from bokeh.models.graphs import from_networkx
+from bokeh.palettes import Spectral4
+from bokeh.plotting import figure
 import networkx as nx
 
 
@@ -35,7 +38,7 @@ def parse_sql(file_path):
 
     tables = []  # To store table names
     joins = []   # To store join types and conditions
-    lineage_graph = {}
+    lineage_graph = {"QUERY": []}
 
     for line in lines:
         tokens = line.strip().split()
@@ -47,9 +50,7 @@ def parse_sql(file_path):
             try:
                 table_name = tokens[tokens.index("FROM") + 1].strip(",")
                 tables.append(table_name)
-                if "FROM" not in lineage_graph:
-                    lineage_graph["FROM"] = []
-                lineage_graph["FROM"].append(table_name)
+                lineage_graph["QUERY"].append(table_name)
             except IndexError:
                 pass
 
@@ -58,12 +59,8 @@ def parse_sql(file_path):
             try:
                 table_name = tokens[tokens.index("JOIN") + 1].strip(",")
                 join_type = " ".join(tokens[:tokens.index("JOIN")]).strip() or "INNER"
-                condition_index = tokens.index("ON") + 1 if "ON" in tokens else None
-                condition = tokens[condition_index:] if condition_index else []
-                joins.append({"table": table_name, "type": join_type, "condition": " ".join(condition)})
-                if "JOIN" not in lineage_graph:
-                    lineage_graph["JOIN"] = []
-                lineage_graph["JOIN"].append({"table": table_name, "type": join_type, "condition": " ".join(condition)})
+                lineage_graph[table_name] = {"join_type": join_type}
+                lineage_graph["QUERY"].append(table_name)
             except IndexError:
                 pass
 
@@ -78,49 +75,31 @@ def visualize_data_lineage_with_bokeh(lineage_graph):
     G = nx.DiGraph()
 
     # Add nodes and edges to the graph
-    for key, values in lineage_graph.items():
-        if key == "FROM":
-            for value in values:
-                G.add_edge("QUERY", value)
-        elif key == "JOIN":
-            for join in values:
-                G.add_edge(join["table"], f"{join['type']} JOIN")
-                G.add_edge(f"{join['type']} JOIN", "QUERY")
+    for query, tables in lineage_graph.items():
+        if isinstance(tables, list):
+            for table in tables:
+                G.add_edge(query, table)
+        elif isinstance(tables, dict):
+            G.add_edge(query, tables["join_type"])
 
-    # Convert the graph into Bokeh's GraphRenderer
-    graph_renderer = GraphRenderer()
-
-    # Create node index mapping
-    node_indices = list(G.nodes())
-    graph_renderer.node_renderer.data_source.add(node_indices, 'index')
-    graph_renderer.node_renderer.data_source.add(
-        [Spectral4[i % 4] for i in range(len(node_indices))], 'color'
-    )
-    graph_renderer.node_renderer.data_source.add([20] * len(node_indices), 'node_size')
-    graph_renderer.node_renderer.glyph = Circle(fill_color="color", fill_alpha=0.8)
-
-    # Define edges
-    start_indices = [list(G.nodes()).index(edge[0]) for edge in G.edges()]
-    end_indices = [list(G.nodes()).index(edge[1]) for edge in G.edges()]
-    graph_renderer.edge_renderer.data_source.data = dict(start=start_indices, end=end_indices)
-    graph_renderer.edge_renderer.glyph = MultiLine(line_color="black", line_alpha=0.8, line_width=1)
-
-    # Define layout
-    layout = nx.spring_layout(G)
-    graph_renderer.layout_provider = StaticLayoutProvider(graph_layout=layout)
-
-    # Create Bokeh plot
-    plot = Plot(
-        x_range=Range1d(-1.1, 1.1),
-        y_range=Range1d(-1.1, 1.1),
+    # Convert the graph to Bokeh from NetworkX
+    plot = figure(
         title="SQL Data Lineage Visualization",
+        x_range=(-2, 2),
+        y_range=(-2, 2),
         width=800,
-        height=600
+        height=600,
     )
     plot.add_tools(HoverTool(tooltips=[("Node", "@index")]))
-    plot.renderers.append(graph_renderer)
 
-    # Show the plot
+    # Use NetworkX's spring layout for node positioning
+    layout = nx.spring_layout(G)
+    bokeh_graph = from_networkx(G, layout, scale=1, center=(0, 0))
+
+    bokeh_graph.node_renderer.glyph = Circle(size=15, fill_color="skyblue", fill_alpha=0.8)
+    bokeh_graph.edge_renderer.glyph = MultiLine(line_color="black", line_alpha=0.8, line_width=1)
+
+    plot.renderers.append(bokeh_graph)
     show(plot)
 
 
