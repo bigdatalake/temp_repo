@@ -2,8 +2,6 @@ import os
 import sqlparse
 from bokeh.io import show
 from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, ColumnDataSource, GraphRenderer, StaticLayoutProvider
-from bokeh.plotting import figure
-from bokeh.palettes import Spectral4
 import networkx as nx
 
 
@@ -98,7 +96,8 @@ def visualize_data_lineage_with_bokeh(lineage_graph):
     graph_renderer.node_renderer.data_source.add(
         [Spectral4[i % 4] for i in range(len(node_indices))], 'color'
     )
-    graph_renderer.node_renderer.glyph = Circle(size=15, fill_color="color")
+    graph_renderer.node_renderer.data_source.add([20] * len(node_indices), 'node_size')
+    graph_renderer.node_renderer.glyph = Circle(fill_color="color", fill_alpha=0.8)
 
     # Define edges
     start_indices = [list(G.nodes()).index(edge[0]) for edge in G.edges()]
