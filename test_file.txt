@@ -92,25 +92,29 @@ def ParseSql(filePath):
         print(f"[DEBUG] Processing statement: {statement}")
 
         for token in tokens:
-            token_value = token.value.upper()
-            print(f"[DEBUG] Token: {token_value}")
+            try:
+                token_value = token.value.upper()
+                print(f"[DEBUG] Token: {token_value}")
 
-            if token.is_group():
-                continue
+                # Check if the token is a group safely
+                if hasattr(token, "is_group") and callable(getattr(token, "is_group")) and token.is_group():
+                    continue
 
-            if "FROM" in token_value or "JOIN" in token_value:
-                table = get_next_token(tokens, token)
-                if table:
-                    table_references.append(table.upper())
+                # Check for table references after FROM or JOIN
+                if "FROM" in token_value or "JOIN" in token_value:
+                    table = get_next_token(tokens, token)
+                    if table:
+                        table_references.append(table.upper())
 
-            if "SELECT" in token_value:
-                selected_columns = get_selected_columns(tokens)
-                column_references.extend(selected_columns)
-
-            if "ON" in token_value:
-                condition = get_condition_after(tokens, token)
-                if condition:
-                    relationships.append(condition)
+                # Check for relationships in ON clauses
+                if "ON" in token_value:
+                    condition = get_condition_after(tokens, token)
+                    if condition:
+                        relationships.append(condition)
+            except AttributeError as e:
+                print(f"[DEBUG] AttributeError while processing token: {e}")
+            except Exception as e:
+                print(f"[DEBUG] Unexpected error: {e}")
 
     if not table_references and not column_references and not relationships:
         print(f"[DEBUG] No data lineage information found in file: {filePath}")
