@@ -1,18 +1,67 @@
 import os
 import sqlparse
-from sqlparse.sql import Identifier, IdentifierList, TokenList
+from sqlparse.sql import Identifier, IdentifierList, Function, TokenList
 from sqlparse.tokens import Keyword, DML
 from graphviz import Digraph
 
 def extract_table_name(token):
     """
-    Extracts table name from a token.
+    Extracts table name from a token and resolves aliases if present.
     """
     if isinstance(token, Identifier):
-        return token.get_real_name()
+        real_name = token.get_real_name()
+        alias = token.get_alias()
+        return real_name, alias
     elif isinstance(token, IdentifierList):
-        return [identifier.get_real_name() for identifier in token.get_identifiers()]
-    return None
+        return [extract_table_name(identifier) for identifier in token.get_identifiers()]
+    return None, None
+
+def process_subquery(token):
+    """
+    Processes a subquery to extract its lineage.
+    """
+    lineage = {"tables": set(), "joins": [], "conditions": []}
+    tokens = token.tokens if isinstance(token, TokenList) else []
+
+    for sub_token in tokens:
+        if sub_token.is_group():
+            sub_lineage = ParseSqlFromTokenList(sub_token)
+            lineage["tables"].update(sub_lineage["tables"])
+            lineage["joins"].extend(sub_lineage["joins"])
+            lineage["conditions"].extend(sub_lineage["conditions"])
+    
+    return lineage
+
+def ParseSqlFromTokenList(token_list):
+    """
+    Extracts lineage details from a token list.
+    """
+    lineage = {"tables": set(), "joins": [], "conditions": []}
+
+    tokens = [token for token in token_list.tokens if not token.is_whitespace]
+    for i, token in enumerate(tokens):
+        if token.ttype is Keyword and token.value.upper() in {"FROM", "JOIN"}:
+            table_token = tokens[i + 1] if i + 1 < len(tokens) else None
+            if table_token:
+                table_name, alias = extract_table_name(table_token)
+                if table_name:
+                    lineage["tables"].add(table_name)
+                    if token.value.upper() == "JOIN":
+                        join_type = tokens[i - 1].value.upper() if i > 0 else "INNER"
+                        lineage["joins"].append({"type": join_type, "table": table_name, "alias": alias})
+
+        elif token.ttype is Keyword and token.value.upper() in {"WHERE", "ON"}:
+            condition_tokens = tokens[i + 1:]
+            condition = " ".join(t.value for t in condition_tokens if not t.is_whitespace)
+            lineage["conditions"].append(condition)
+
+        elif token.is_group():
+            sub_lineage = process_subquery(token)
+            lineage["tables"].update(sub_lineage["tables"])
+            lineage["joins"].extend(sub_lineage["joins"])
+            lineage["conditions"].extend(sub_lineage["conditions"])
+
+    return lineage
 
 def ParseSql(filePath):
     """
@@ -27,63 +76,18 @@ def ParseSql(filePath):
     formatted_sql = sqlparse.format(sql, strip_comments=True, keyword_case='upper')
     parsed = sqlparse.parse(formatted_sql)
 
-    lineage = {
-        "tables": set(),
-        "relationships": [],  # JOIN relationships with types
-        "where_clause": None,
-        "group_by_clause": None,
-        "having_clause": None,
-        "union": False,
-    }
-
+    overall_lineage = {"tables": set(), "joins": [], "conditions": []}
     for statement in parsed:
-        tokens = [token for token in statement.flatten() if not token.is_whitespace]
-        for i, token in enumerate(tokens):
-            token_value = token.value.upper()
+        statement_lineage = ParseSqlFromTokenList(statement)
+        overall_lineage["tables"].update(statement_lineage["tables"])
+        overall_lineage["joins"].extend(statement_lineage["joins"])
+        overall_lineage["conditions"].extend(statement_lineage["conditions"])
 
-            if token.ttype is DML and token_value == "SELECT":
-                continue
-
-            elif token.ttype is Keyword and token_value == "FROM":
-                next_token = tokens[i + 1] if i + 1 < len(tokens) else None
-                table_name = extract_table_name(next_token)
-                if table_name:
-                    lineage["tables"].update(table_name if isinstance(table_name, list) else [table_name])
-
-            elif token.ttype is Keyword and "JOIN" in token_value:
-                join_type = token_value.replace("JOIN", "").strip() or "INNER"
-                next_token = tokens[i + 1] if i + 1 < len(tokens) else None
-                table_name = extract_table_name(next_token)
-                if table_name:
-                    lineage["relationships"].append({
-                        "type": join_type.upper(),
-                        "table": table_name
-                    })
-
-            elif token.ttype is Keyword and token_value == "WHERE":
-                where_tokens = tokens[i + 1:]
-                lineage["where_clause"] = " ".join(t.value for t in where_tokens)
-
-            elif token.ttype is Keyword and token_value == "GROUP BY":
-                group_by_tokens = tokens[i + 1:]
-                lineage["group_by_clause"] = " ".join(t.value for t in group_by_tokens)
-
-            elif token.ttype is Keyword and token_value == "HAVING":
-                having_tokens = tokens[i + 1:]
-                lineage["having_clause"] = " ".join(t.value for t in having_tokens)
-
-            elif token.ttype is Keyword and token_value == "UNION":
-                lineage["union"] = True
-
-    lineage["tables"] = list(lineage["tables"])
-    return lineage
+    return overall_lineage
 
 def visualize_lineage(lineage):
     """
     Visualizes the SQL lineage using Graphviz.
-    
-    Args:
-    - lineage (dict): Lineage dictionary containing tables, relationships, and clauses.
     """
     graph = Digraph("SQL_Lineage", format="png", node_attr={'shape': 'box', 'style': 'rounded'})
 
@@ -92,22 +96,14 @@ def visualize_lineage(lineage):
         graph.node(table, table)
 
     # Add relationships as edges
-    for rel in lineage["relationships"]:
-        graph.edge("Main Query", rel["table"], label=f"{rel['type']} JOIN")
+    for join in lineage["joins"]:
+        graph.edge("Main Query", join["table"], label=f"{join['type']} JOIN")
 
-    # Add additional information as subgraphs or labels
-    if lineage["where_clause"]:
-        graph.node("WHERE", f"WHERE:\n{lineage['where_clause']}", shape="note")
-        graph.edge("Main Query", "WHERE")
-    if lineage["group_by_clause"]:
-        graph.node("GROUP BY", f"GROUP BY:\n{lineage['group_by_clause']}", shape="note")
-        graph.edge("WHERE", "GROUP BY")
-    if lineage["having_clause"]:
-        graph.node("HAVING", f"HAVING:\n{lineage['having_clause']}", shape="note")
-        graph.edge("GROUP BY", "HAVING")
-    if lineage["union"]:
-        graph.node("UNION", "UNION", shape="note")
-        graph.edge("HAVING", "UNION")
+    # Add conditions as nodes
+    for i, condition in enumerate(lineage["conditions"], 1):
+        condition_node = f"Condition_{i}"
+        graph.node(condition_node, f"Condition:\n{condition}", shape="note")
+        graph.edge("Main Query", condition_node)
 
     # Save and render the graph
     graph.render("sql_lineage_graph", view=True)
