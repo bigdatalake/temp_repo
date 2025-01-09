@@ -1,199 +1,124 @@
 import os
 import sqlparse
-from sqlparse.sql import Token, IdentifierList, Identifier
+from sqlparse.sql import Identifier, IdentifierList, TokenList
 from sqlparse.tokens import Keyword, DML
-import yaml
-from yaml.loader import SafeLoader
+from graphviz import Digraph
 
-
-# Helper function: Get the next token after a specific keyword
-def get_next_token(tokens, current_token):
-    try:
-        idx = tokens.index(current_token)
-        if idx + 1 < len(tokens):
-            next_token = tokens[idx + 1]
-            return next_token.value if next_token else None
-    except ValueError as e:
-        print(f"[DEBUG] Error finding next token: {e}")
+def extract_table_name(token):
+    """
+    Extracts table name from a token.
+    """
+    if isinstance(token, Identifier):
+        return token.get_real_name()
+    elif isinstance(token, IdentifierList):
+        return [identifier.get_real_name() for identifier in token.get_identifiers()]
     return None
 
-
-# Helper function: Extract selected columns
-def get_selected_columns(tokens):
-    columns = []
-    inside_select = False
-    for token in tokens:
-        if token.ttype is DML and token.value.upper() == "SELECT":
-            inside_select = True
-        elif inside_select:
-            if isinstance(token, IdentifierList):
-                for identifier in token.get_identifiers():
-                    columns.append(identifier.get_real_name())
-            elif isinstance(token, Identifier):
-                columns.append(token.get_real_name())
-            if token.ttype is Keyword and token.value.upper() == "FROM":
-                break
-    return columns
-
-
-# Helper function: Extract conditions after "ON"
-def get_condition_after(tokens, current_token):
-    try:
-        idx = tokens.index(current_token)
-        if idx + 1 < len(tokens):
-            condition_token = tokens[idx + 1]
-            return condition_token.value.strip() if condition_token else None
-    except ValueError as e:
-        print(f"[DEBUG] Error extracting condition: {e}")
-    return None
-
-
-# Main function: Parse SQL for tables, columns, relationships, and CTEs
 def ParseSql(filePath):
+    """
+    Parses an SQL file to extract detailed data lineage.
+    """
     if not os.path.exists(filePath):
-        print(f"[DEBUG] File does not exist: {filePath}")
-        return None
-
+        raise FileNotFoundError(f"File not found: {filePath}")
+    
     with open(filePath, "r") as sql_file:
         sql = sql_file.read()
-        if not sql.strip():
-            print(f"[DEBUG] File is empty: {filePath}")
-            return None
+    
+    formatted_sql = sqlparse.format(sql, strip_comments=True, keyword_case='upper')
+    parsed = sqlparse.parse(formatted_sql)
 
-    try:
-        formatted_sql = sqlparse.format(
-            sql,
-            strip_comments=True,
-            strip_ws=True,
-            indent_columns=True,
-            reindent=True,
-            keyword_case='upper'
-        )
-    except Exception as e:
-        print(f"[DEBUG] Error formatting SQL: {e}")
-        return None
-
-    try:
-        parsed = sqlparse.parse(formatted_sql)
-        if not parsed:
-            print(f"[DEBUG] SQL parsing returned no statements for file: {filePath}")
-            return None
-    except Exception as e:
-        print(f"[DEBUG] Error parsing SQL: {e}")
-        return None
-
-    table_references = []
-    column_references = []
-    relationships = []
-    ctes = {}
-
-    for statement in parsed:
-        tokens = statement.tokens
-        print(f"[DEBUG] Processing statement: {statement}")
-
-        for token in tokens:
-            try:
-                token_value = token.value.upper()
-                print(f"[DEBUG] Token: {token_value}")
-
-                # Check if the token is a group safely
-                if hasattr(token, "is_group") and callable(getattr(token, "is_group")) and token.is_group():
-                    continue
-
-                # Check for table references after FROM or JOIN
-                if "FROM" in token_value or "JOIN" in token_value:
-                    table = get_next_token(tokens, token)
-                    if table:
-                        table_references.append(table.upper())
-
-                # Check for relationships in ON clauses
-                if "ON" in token_value:
-                    condition = get_condition_after(tokens, token)
-                    if condition:
-                        relationships.append(condition)
-            except AttributeError as e:
-                print(f"[DEBUG] AttributeError while processing token: {e}")
-            except Exception as e:
-                print(f"[DEBUG] Unexpected error: {e}")
-
-    if not table_references and not column_references and not relationships:
-        print(f"[DEBUG] No data lineage information found in file: {filePath}")
-        return None
-
-    return {
-        "tables": list(set(table_references)),
-        "columns": list(set(column_references)),
-        "relationships": relationships,
-        "ctes": ctes
+    lineage = {
+        "tables": set(),
+        "relationships": [],  # JOIN relationships with types
+        "where_clause": None,
+        "group_by_clause": None,
+        "having_clause": None,
+        "union": False,
     }
 
+    for statement in parsed:
+        tokens = [token for token in statement.flatten() if not token.is_whitespace]
+        for i, token in enumerate(tokens):
+            token_value = token.value.upper()
 
-# Write results to CSV
-def write_to_csv(lst, output_path="/Users/vuppupra/Downloads/hl_ongoing.csv"):
-    with open(output_path, 'w') as csvfile:
-        for item in lst:
-            csvfile.write(str(item) + '\n')
-    print(f"[DEBUG] CSV written to: {output_path}")
+            if token.ttype is DML and token_value == "SELECT":
+                continue
 
+            elif token.ttype is Keyword and token_value == "FROM":
+                next_token = tokens[i + 1] if i + 1 < len(tokens) else None
+                table_name = extract_table_name(next_token)
+                if table_name:
+                    lineage["tables"].update(table_name if isinstance(table_name, list) else [table_name])
 
-# Loop through a directory and process SQL files
-def loop_path(path):
-    lineage_data = []
+            elif token.ttype is Keyword and "JOIN" in token_value:
+                join_type = token_value.replace("JOIN", "").strip() or "INNER"
+                next_token = tokens[i + 1] if i + 1 < len(tokens) else None
+                table_name = extract_table_name(next_token)
+                if table_name:
+                    lineage["relationships"].append({
+                        "type": join_type.upper(),
+                        "table": table_name
+                    })
 
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            if file.endswith('.sql'):
-                file_path = os.path.join(root, file)
-                print(f"[DEBUG] Processing file: {file_path}")
-                lineage = ParseSql(file_path)
-                if lineage:
-                    lineage_data.append(lineage)
+            elif token.ttype is Keyword and token_value == "WHERE":
+                where_tokens = tokens[i + 1:]
+                lineage["where_clause"] = " ".join(t.value for t in where_tokens)
 
-    write_to_csv(lineage_data)
-    print("[DEBUG] Lineage Data:", lineage_data)
+            elif token.ttype is Keyword and token_value == "GROUP BY":
+                group_by_tokens = tokens[i + 1:]
+                lineage["group_by_clause"] = " ".join(t.value for t in group_by_tokens)
 
+            elif token.ttype is Keyword and token_value == "HAVING":
+                having_tokens = tokens[i + 1:]
+                lineage["having_clause"] = " ".join(t.value for t in having_tokens)
 
-# Extract ETL pipeline parameters
-def getparams(task, dataframe, basePath):
-    table = filter_condition = uri = persist = references = ""
-    for key, value in dataframe.items():
-        if key == "table":
-            table = value
-        elif key == "filter":
-            filter_condition = value
-        elif key == "uri":
-            uri = os.path.join(basePath, value)
-        elif key == "persist":
-            persist = value
+            elif token.ttype is Keyword and token_value == "UNION":
+                lineage["union"] = True
 
-        if task == "transform.sql" and uri:
-            references = ParseSql(uri)
+    lineage["tables"] = list(lineage["tables"])
+    return lineage
 
-    return (task, dataframe.get("name"), table, filter_condition, persist, uri, str(references))
+def visualize_lineage(lineage):
+    """
+    Visualizes the SQL lineage using Graphviz.
+    
+    Args:
+    - lineage (dict): Lineage dictionary containing tables, relationships, and clauses.
+    """
+    graph = Digraph("SQL_Lineage", format="png", node_attr={'shape': 'box', 'style': 'rounded'})
 
+    # Add tables as nodes
+    for table in lineage["tables"]:
+        graph.node(table, table)
 
-# Main function to parse YAML and SQL files
-def main():
-    YmlFile = "/Users/extract.yaml"
-    basePath = os.path.dirname(YmlFile)
+    # Add relationships as edges
+    for rel in lineage["relationships"]:
+        graph.edge("Main Query", rel["table"], label=f"{rel['type']} JOIN")
 
-    dataframes = [("ETL task", "Data Frame", "Table Name", "Filter", "Persist", "URI", "References")]
-    with open(YmlFile, 'r') as stream:
-        pipeline = yaml.load(stream, Loader=SafeLoader)
+    # Add additional information as subgraphs or labels
+    if lineage["where_clause"]:
+        graph.node("WHERE", f"WHERE:\n{lineage['where_clause']}", shape="note")
+        graph.edge("Main Query", "WHERE")
+    if lineage["group_by_clause"]:
+        graph.node("GROUP BY", f"GROUP BY:\n{lineage['group_by_clause']}", shape="note")
+        graph.edge("WHERE", "GROUP BY")
+    if lineage["having_clause"]:
+        graph.node("HAVING", f"HAVING:\n{lineage['having_clause']}", shape="note")
+        graph.edge("GROUP BY", "HAVING")
+    if lineage["union"]:
+        graph.node("UNION", "UNION", shape="note")
+        graph.edge("HAVING", "UNION")
 
-    for etl in pipeline:
-        for key, value in etl.items():
-            if key in {"extract.hive", "load.parquet", "transform.sql"}:
-                for _, dfs in value.items():
-                    for dataframe in dfs:
-                        thisdf = getparams(key, dataframe, basePath)
-                        print(thisdf)
-                        dataframes.append(thisdf)
+    # Save and render the graph
+    graph.render("sql_lineage_graph", view=True)
 
-    for aTuple in dataframes:
-        print('|'.join(map(str, aTuple)))
-
-
-# Run the main function
 if __name__ == "__main__":
-    main()
+    # Sample SQL file path
+    sql_file_path = "sample.sql"  # Replace with the actual SQL file path
+
+    try:
+        lineage = ParseSql(sql_file_path)
+        print("Data Lineage:", lineage)
+        visualize_lineage(lineage)
+    except FileNotFoundError as e:
+        print(e)
