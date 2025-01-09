@@ -1,35 +1,87 @@
-# Install modules sqlparse and pyyaml for this package to work
-# python3 -m pip install pyyaml
-# python3 -m pip install sqlparse
-
 import os
 import sqlparse
+from sqlparse.sql import Token, IdentifierList, Identifier
+from sqlparse.tokens import Keyword, DML
 import yaml
 from yaml.loader import SafeLoader
 
 
+# Helper function: Get the next token after a specific keyword
+def get_next_token(tokens, current_token):
+    try:
+        idx = tokens.index(current_token)
+        if idx + 1 < len(tokens):
+            next_token = tokens[idx + 1]
+            return next_token.value if next_token else None
+    except ValueError as e:
+        print(f"[DEBUG] Error finding next token: {e}")
+    return None
+
+
+# Helper function: Extract selected columns
+def get_selected_columns(tokens):
+    columns = []
+    inside_select = False
+    for token in tokens:
+        if token.ttype is DML and token.value.upper() == "SELECT":
+            inside_select = True
+        elif inside_select:
+            if isinstance(token, IdentifierList):
+                for identifier in token.get_identifiers():
+                    columns.append(identifier.get_real_name())
+            elif isinstance(token, Identifier):
+                columns.append(token.get_real_name())
+            if token.ttype is Keyword and token.value.upper() == "FROM":
+                break
+    return columns
+
+
+# Helper function: Extract conditions after "ON"
+def get_condition_after(tokens, current_token):
+    try:
+        idx = tokens.index(current_token)
+        if idx + 1 < len(tokens):
+            condition_token = tokens[idx + 1]
+            return condition_token.value.strip() if condition_token else None
+    except ValueError as e:
+        print(f"[DEBUG] Error extracting condition: {e}")
+    return None
+
+
+# Main function: Parse SQL for tables, columns, relationships, and CTEs
 def ParseSql(filePath):
-    """
-    Parse the SQL file and extract detailed data lineage information.
-    """
     if not os.path.exists(filePath):
+        print(f"[DEBUG] File does not exist: {filePath}")
         return None
 
     with open(filePath, "r") as sql_file:
         sql = sql_file.read()
+        if not sql.strip():
+            print(f"[DEBUG] File is empty: {filePath}")
+            return None
 
-    # Format the SQL for easier parsing
-    formatted_sql = sqlparse.format(
-        sql,
-        strip_comments=True,
-        strip_ws=True,
-        indent_columns=True,
-        reindent=True,
-        keyword_case='upper'
-    )
+    try:
+        formatted_sql = sqlparse.format(
+            sql,
+            strip_comments=True,
+            strip_ws=True,
+            indent_columns=True,
+            reindent=True,
+            keyword_case='upper'
+        )
+    except Exception as e:
+        print(f"[DEBUG] Error formatting SQL: {e}")
+        return None
 
-    # Parse and extract detailed lineage
-    parsed = sqlparse.parse(formatted_sql)
+    try:
+        parsed = sqlparse.parse(formatted_sql)
+        if not parsed:
+            print(f"[DEBUG] SQL parsing returned no statements for file: {filePath}")
+            return None
+    except Exception as e:
+        print(f"[DEBUG] Error parsing SQL: {e}")
+        return None
+
     table_references = []
     column_references = []
     relationships = []
@@ -37,15 +89,14 @@ def ParseSql(filePath):
 
     for statement in parsed:
         tokens = statement.tokens
+        print(f"[DEBUG] Processing statement: {statement}")
 
         for token in tokens:
             token_value = token.value.upper()
+            print(f"[DEBUG] Token: {token_value}")
+
             if token.is_group():
-                nested_data = parse_sql_group(token)
-                table_references.extend(nested_data['tables'])
-                column_references.extend(nested_data['columns'])
-                relationships.extend(nested_data['relationships'])
-                ctes.update(nested_data['ctes'])
+                continue
 
             if "FROM" in token_value or "JOIN" in token_value:
                 table = get_next_token(tokens, token)
@@ -58,7 +109,12 @@ def ParseSql(filePath):
 
             if "ON" in token_value:
                 condition = get_condition_after(tokens, token)
-                relationships.append(condition)
+                if condition:
+                    relationships.append(condition)
+
+    if not table_references and not column_references and not relationships:
+        print(f"[DEBUG] No data lineage information found in file: {filePath}")
+        return None
 
     return {
         "tables": list(set(table_references)),
@@ -68,149 +124,72 @@ def ParseSql(filePath):
     }
 
 
-def parse_sql_group(token):
-    """
-    Parse a group of tokens (e.g., subqueries, CTEs).
-    """
-    table_references = []
-    column_references = []
-    relationships = []
-    ctes = {}
-
-    for subtoken in token.tokens:
-        if subtoken.is_group():
-            nested_data = parse_sql_group(subtoken)
-            table_references.extend(nested_data['tables'])
-            column_references.extend(nested_data['columns'])
-            relationships.extend(nested_data['relationships'])
-            ctes.update(nested_data['ctes'])
-
-        token_value = subtoken.value.upper()
-
-        if "FROM" in token_value or "JOIN" in token_value:
-            table = get_next_token(token.tokens, subtoken)
-            if table:
-                table_references.append(table.upper())
-
-        if "SELECT" in token_value:
-            selected_columns = get_selected_columns(token.tokens)
-            column_references.extend(selected_columns)
-
-        if "ON" in token_value:
-            condition = get_condition_after(token.tokens, subtoken)
-            relationships.append(condition)
-
-    return {
-        "tables": list(set(table_references)),
-        "columns": list(set(column_references)),
-        "relationships": relationships,
-        "ctes": ctes
-    }
+# Write results to CSV
+def write_to_csv(lst, output_path="/Users/vuppupra/Downloads/hl_ongoing.csv"):
+    with open(output_path, 'w') as csvfile:
+        for item in lst:
+            csvfile.write(str(item) + '\n')
+    print(f"[DEBUG] CSV written to: {output_path}")
 
 
-def get_next_token(tokens, current_token):
-    """
-    Get the next token after a specific keyword (e.g., FROM or JOIN).
-    """
-    try:
-        idx = tokens.index(current_token)
-        next_token = tokens[idx + 1]
-        return next_token.value if next_token else None
-    except (ValueError, IndexError):
-        return None
-
-
-def get_selected_columns(tokens):
-    """
-    Extract columns being selected in a SELECT statement.
-    """
-    columns = []
-    for token in tokens:
-        if token.ttype in (sqlparse.tokens.Wildcard, sqlparse.tokens.Name):
-            columns.append(token.value)
-    return columns
-
-
-def get_condition_after(tokens, current_token):
-    """
-    Extract a condition (e.g., ON clause) following a specific token.
-    """
-    try:
-        idx = tokens.index(current_token)
-        condition = tokens[idx + 1]
-        return condition.value if condition else None
-    except (ValueError, IndexError):
-        return None
-
-
-def write_to_csv(lst):
-    """
-    Write lineage data to a CSV file.
-    """
-    with open("/Users/vuppupra/Downloads/hl_ongoing.csv", 'w') as csvfile:
-        for tbl in lst:
-            csvfile.write(str(tbl) + '\n')
-    csvfile.close()
-
-
+# Loop through a directory and process SQL files
 def loop_path(path):
-    """
-    Process all SQL files in the given path and extract lineage details.
-    """
     lineage_data = []
 
-    for (root, dirs, files) in os.walk(path):
+    for root, dirs, files in os.walk(path):
         for file in files:
             if file.endswith('.sql'):
-                filePath = os.path.join(root, file)
-                lineage = ParseSql(filePath)
-                lineage_data.append({"file": file, "lineage": lineage})
+                file_path = os.path.join(root, file)
+                print(f"[DEBUG] Processing file: {file_path}")
+                lineage = ParseSql(file_path)
+                if lineage:
+                    lineage_data.append(lineage)
 
     write_to_csv(lineage_data)
-    print(lineage_data)
+    print("[DEBUG] Lineage Data:", lineage_data)
 
 
+# Extract ETL pipeline parameters
 def getparams(task, dataframe, basePath):
-    """
-    Extract parameters from the YAML configuration and lineage data.
-    """
-    nowdf = ("ETL task", "Data Frame", "Table Name", "Filter", "Persist", "URI", "References")
-    table = filter = uri = persist = references = ""
-
-    for key in dataframe:
+    table = filter_condition = uri = persist = references = ""
+    for key, value in dataframe.items():
         if key == "table":
-            table = dataframe[key]
+            table = value
         elif key == "filter":
-            filter = dataframe[key]
+            filter_condition = value
         elif key == "uri":
-            uri = os.path.join(basePath, dataframe[key])
+            uri = os.path.join(basePath, value)
         elif key == "persist":
-            persist = dataframe[key]
+            persist = value
 
-        if task == "transform.sql":
+        if task == "transform.sql" and uri:
             references = ParseSql(uri)
 
-    nowdf = (task, dataframe["name"], table, filter, persist, uri, str(references))
-    return nowdf
+    return (task, dataframe.get("name"), table, filter_condition, persist, uri, str(references))
 
 
-# Main Execution
-YmlFile = "/Users/extract.yaml"
-basePath = os.path.dirname(YmlFile)
+# Main function to parse YAML and SQL files
+def main():
+    YmlFile = "/Users/extract.yaml"
+    basePath = os.path.dirname(YmlFile)
 
-dataframes = [("ETL task", "Data Frame", "Table Name", "Filter", "Persist", "URI", "References")]
-with open(YmlFile, 'r') as stream:
-    pipeline = yaml.load(stream, Loader=SafeLoader)
+    dataframes = [("ETL task", "Data Frame", "Table Name", "Filter", "Persist", "URI", "References")]
+    with open(YmlFile, 'r') as stream:
+        pipeline = yaml.load(stream, Loader=SafeLoader)
 
-for etl in pipeline:
-    for key, value in etl.items():
-        if key in ("extract.hive", "load.parquet", "transform.sql"):
-            for inp, dfs in value.items():
-                for dataframe in dfs:
-                    thisdf = getparams(key, dataframe, basePath)
-                    print(thisdf)
-                    dataframes.append(thisdf)
+    for etl in pipeline:
+        for key, value in etl.items():
+            if key in {"extract.hive", "load.parquet", "transform.sql"}:
+                for _, dfs in value.items():
+                    for dataframe in dfs:
+                        thisdf = getparams(key, dataframe, basePath)
+                        print(thisdf)
+                        dataframes.append(thisdf)
 
-for aTuple in dataframes:
-    elements = '|'.join(map(str, aTuple))
-    print(elements)
+    for aTuple in dataframes:
+        print('|'.join(map(str, aTuple)))
+
+
+# Run the main function
+if __name__ == "__main__":
+    main()
