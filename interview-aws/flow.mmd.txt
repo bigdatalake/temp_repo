@@ -1,0 +1,38 @@
+flowchart TD
+    subgraph "Data Ingestion"
+        A[Kafka Producers] -->|Produce Events| B[Kafka Cluster]
+        B -->|Consume Events| C[Kafka Consumer]
+        C -->|Write JSON files| D[(S3 Bucket)]
+        D -->|Partitioned as\nyear/month/day/hour| D1[Partitioned Raw Data]
+    end
+
+    subgraph "Metadata Cataloging"
+        D1 -->|Triggers| E[S3 Event Notification]
+        E -->|Notifies| F[Lambda Function]
+        F -->|Batches Events\n5-15 min window| G[Glue Crawler]
+        G -->|Catalogs Metadata| H[(Glue Data Catalog)]
+        H -->|Registers Schema| I[Iceberg Table Metadata]
+    end
+
+    subgraph "Data Compaction & Optimization"
+        D1 -->|Triggers| J[EventBridge Rule]
+        J -->|Schedules| K[Hourly Compaction Job]
+        K -->|Converts JSON to Parquet\nCompacts Small Files| L[Hourly Parquet Files]
+        
+        L -->|Scheduled Daily| M[Daily Compaction Job]
+        M -->|Compacts Hourly Files| N[Optimized Daily Files]
+        
+        N -->|Updates| I
+        I -->|Maintains Metadata| O[Iceberg Table State]
+    end
+
+    subgraph "Query & Analytics"
+        O -->|Enables| P[Time Travel Queries]
+        O -->|Provides| Q[Schema Evolution]
+        O -->|Optimizes| R[Partition Pruning]
+        
+        P --> S[Analytics Tools]
+        Q --> S
+        R --> S
+        S -->|Query Results| T[Business Intelligence]
+    end

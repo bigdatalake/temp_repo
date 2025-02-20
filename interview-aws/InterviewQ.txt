@@ -1,0 +1,53 @@
+Scenario Kafka consumer deliveries json event files(size in kbs) to S3 bucket in real time and want this data cataloged in Glue Catalog.
+
+1. How and What will be the S3 partition startagey will you design for better storage and performance. Like year/month/day/hour or year_month_day/hour or year_month_day_hour
+2. How do you orchestrate Glue crawler to crawl for only event event files to catalog ? like s3 event notification with sqs or event bridge
+
+3. How can we leverage Iceberg tables for the above catalog ?
+4. How do you handle the compaction of data.
+
+5. email alerts only if pyspark job fails on emr  + orchestrate Airflow
+
+
+Hive (metastore tables) --> No built-in ACID transaction support (traditional Hive)
+"transactional table formats" or "lakehouse table formats" ---> iceberg tables -> Support atomic operations and ACID transactions
+
+
+
+
+s3://bucket/data/{event_type}/year={YYYY}/month={MM}/day={DD}/hour={HH}/
+
+
+Option 0: S3 Event Notifications -> SQS -> Glue Crawler
+Option 1: S3 Event Notifications -> Lambda -> Glue Crawler
+Option 2: S3 Event Notifications -> EventBridge -> Glue Crawler
+
+
+Option 1: S3 Event Notifications + Lambda + Glue Crawler
+
+	-> Configure S3 to send notifications to Lambda when new objects arrive
+	-> Lambda accumulates events for a short period (e.g., 5-15 minutes)
+	-> Lambda triggers Glue Crawler targeting only new partitions
+	-> Set crawler to respect existing schema to avoid unnecessary metadata updates
+
+
+CREATE TABLE catalog_name.db_name.table_name (
+  -- schema definition
+)
+PARTITIONED BY (year, month, day, hour)
+LOCATION 's3://bucket/data/event_type/'
+TBLPROPERTIES (
+  'table_type'='ICEBERG',
+  'format'='parquet'
+)
+
+you don't actually need to run a Glue Crawler for Iceberg tables. This is one of Iceberg's key advantages.
+Apache Iceberg handles metadata management automatically, making Glue Crawlers unnecessary for these tables. 
+
+
+
+
+DAG modify --> sns topic -> subscribe to email	[ custom message with task details] [if the Airflow Scheduler crash, then this is a disadvantage ]
+Cloud watch alaram [ may delays in detecting failures based on the cloudwatch polling]
+-----------------------------------------------
+Unity Catalog -> Delta Lake 
