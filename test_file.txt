@@ -1,116 +1,129 @@
-import os
-import sqlparse
-from bokeh.io import show
-from bokeh.models import Plot, Range1d, Circle, MultiLine, HoverTool, StaticLayoutProvider
-from bokeh.models.graphs import from_networkx
-from bokeh.palettes import Spectral4
-from bokeh.plotting import figure
-import networkx as nx
+import java.time.{Instant, ZoneId, LocalDateTime, ZoneOffset}
+import java.time.format.DateTimeFormatter
+import java.util.Properties
+import org.apache.kafka.clients.admin.{AdminClient, ListOffsetsResult, OffsetSpec}
+import org.apache.kafka.common.TopicPartition
+import org.apache.spark.sql.SparkSession
 
 
-def clean_and_format_sql(file_path):
-    """
-    Cleans and formats the SQL file to remove comments and unnecessary whitespaces.
-    """
-    if os.path.exists(file_path):
-        with open(file_path, "r") as sql_file:
-            sql = sql_file.read()
+import scala.jdk.CollectionConverters._
 
-        # Clean and format SQL
-        formatted_sql = sqlparse.format(
-            sql,
-            strip_comments=True,
-            strip_whitespace=True,
-            reindent=True,
-            keyword_case="upper",
-        )
-        return formatted_sql
-    else:
-        raise FileNotFoundError(f"File not found: {file_path}")
+object KafkaSparkDataReconApp {
 
+  def main(args: Array[String]): Unit = {
+    val topic = "test_data_topic"
+    //val startingTime = "2025-07-15 20:16:42.217"
+    //val endingTime = "2025-07-15 20:18:46.161"
 
-def parse_sql(file_path):
-    """
-    Parses the cleaned SQL file to extract tables, join types, and conditions.
-    """
-    sql = clean_and_format_sql(file_path)
-    lines = sql.splitlines()
+    val startingTime = "2025-07-15 00:00:00.001"
+    val endingTime = "2025-07-15 23:59:59.999"
 
-    tables = []  # To store table names
-    joins = []   # To store join types and conditions
-    lineage_graph = {"QUERY": []}
+    // Convert to milliseconds
+    val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+    val zoneId = ZoneId.of("Australia/Sydney") // Adjust to your timezone if needed
 
-    for line in lines:
-        tokens = line.strip().split()
-        if not tokens:
-            continue
+    val startingEpochMs = LocalDateTime.parse(startingTime, formatter)
+      .atZone(zoneId)
+      .toInstant
+      .toEpochMilli
+    val endingEpochMs = LocalDateTime.parse(endingTime, formatter)
+      .atZone(zoneId)
+      .toInstant
+      .toEpochMilli
 
-        # Extract tables from FROM clause
-        if "FROM" in tokens:
-            try:
-                table_name = tokens[tokens.index("FROM") + 1].strip(",")
-                tables.append(table_name)
-                lineage_graph["QUERY"].append(table_name)
-            except IndexError:
-                pass
+    // Setup Kafka Admin Client
+    val props = new Properties()
+    props.put("bootstrap.servers", "localhost:9092")
+    val admin = AdminClient.create(props)
 
-        # Extract tables, join types, and conditions from JOIN clause
-        if "JOIN" in tokens:
-            try:
-                table_name = tokens[tokens.index("JOIN") + 1].strip(",")
-                join_type = " ".join(tokens[:tokens.index("JOIN")]).strip() or "INNER"
-                lineage_graph[table_name] = {"join_type": join_type}
-                lineage_graph["QUERY"].append(table_name)
-            except IndexError:
-                pass
+    // Get partitions
+    val partitions = admin.describeTopics(List(topic).asJava).all().get().get(topic).partitions().asScala.map(_.partition())
 
-    return lineage_graph
+    // Create TopicPartitions
+    val topicPartitions = partitions.map(p => new TopicPartition(topic, p))
 
+    // Create timestamp mapping
+    val timestampsToSearch = topicPartitions.map(tp => tp -> OffsetSpec.forTimestamp(startingEpochMs)).toMap.asJava
+    val endTimestampsToSearch = topicPartitions.map(tp => tp -> OffsetSpec.forTimestamp(endingEpochMs)).toMap.asJava
 
-def visualize_data_lineage_with_bokeh(lineage_graph):
-    """
-    Visualizes the data lineage using Bokeh.
-    """
-    # Create a directed graph
-    G = nx.DiGraph()
+    // Get Offsets
+    val startOffsets = admin.listOffsets(timestampsToSearch).all().get()
+    val endOffsets = admin.listOffsets(endTimestampsToSearch).all().get()
 
-    # Add nodes and edges to the graph
-    for query, tables in lineage_graph.items():
-        if isinstance(tables, list):
-            for table in tables:
-                G.add_edge(query, table)
-        elif isinstance(tables, dict):
-            G.add_edge(query, tables["join_type"])
+    // Filter valid TopicPartitions (where start and end offsets are valid)
+    val validTopicPartitions = topicPartitions.filter { tp =>
+      val startOffset = startOffsets.get(tp).offset()
+      val endOffset = endOffsets.get(tp).offset()
+      startOffset != -1L && endOffset != -1L
+    }
 
-    # Convert the graph to Bokeh from NetworkX
-    plot = figure(
-        title="SQL Data Lineage Visualization",
-        x_range=(-2, 2),
-        y_range=(-2, 2),
-        width=800,
-        height=600,
-    )
-    plot.add_tools(HoverTool(tooltips=[("Node", "@index")]))
+    if (validTopicPartitions.isEmpty) {
+      println("No valid partitions found with data in the specified time range.")
+      admin.close()
+      return
+    }
 
-    # Use NetworkX's spring layout for node positioning
-    layout = nx.spring_layout(G)
-    bokeh_graph = from_networkx(G, layout, scale=1, center=(0, 0))
+    val fixedStartOffsets = topicPartitions.map { tp =>
+      val startOffset = startOffsets.get(tp).offset()
+      val correctedStartOffset = if (startOffset == -1L) {
+        println(s"Partition ${tp.partition()} has no start offset, fallback to earliest.")
+        admin.listOffsets(Map(tp -> OffsetSpec.earliest()).asJava).all().get().get(tp).offset()
+      } else startOffset
+      tp.partition() -> correctedStartOffset
+    }.toMap
 
-    bokeh_graph.node_renderer.glyph = Circle(size=15, fill_color="skyblue", fill_alpha=0.8)
-    bokeh_graph.edge_renderer.glyph = MultiLine(line_color="black", line_alpha=0.8, line_width=1)
-
-    plot.renderers.append(bokeh_graph)
-    show(plot)
+    val fixedEndOffsets = topicPartitions.map { tp =>
+      val endOffset = endOffsets.get(tp).offset()
+      val correctedEndOffset = if (endOffset == -1L) {
+        println(s"Partition ${tp.partition()} has no end offset, fallback to latest.")
+        admin.listOffsets(Map(tp -> OffsetSpec.latest()).asJava).all().get().get(tp).offset()
+      } else endOffset
+      tp.partition() -> correctedEndOffset
+    }.toMap
 
 
-# Example usage
-if __name__ == "__main__":
-    # Provide the path to your SQL file
-    sql_file_path = "path_to_your_sql_file.sql"
+    val startingOffsetsJson = fixedStartOffsets.map { case (p, offset) => s""""$p": $offset""" }.mkString("{", ",", "}")
+    val endingOffsetsJson = fixedEndOffsets.map { case (p, offset) => s""""$p": $offset""" }.mkString("{", ",", "}")
 
-    try:
-        lineage_graph = parse_sql(sql_file_path)
-        print("Lineage Graph:", lineage_graph)
-        visualize_data_lineage_with_bokeh(lineage_graph)
-    except Exception as e:
-        print(f"Error: {e}")
+
+    val startingOffsetsFullJson = s"""{"$topic": $startingOffsetsJson}"""
+    val endingOffsetsFullJson = s"""{"$topic": $endingOffsetsJson}"""
+
+    println(s"startingOffsets = $startingOffsetsFullJson")
+    println(s"endingOffsets = $endingOffsetsFullJson")
+
+
+    admin.close()
+
+    val spark = SparkSession.builder()
+      .appName("KafkaDataRecon")
+      .master("local[*]")
+      .getOrCreate()
+
+    import spark.implicits._
+    spark.sparkContext.setLogLevel("ERROR")
+
+    val kafkaDf = spark.read
+      .format("kafka")
+      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("startingOffsets", startingOffsetsFullJson)
+      .option("endingOffsets", endingOffsetsFullJson)
+      .option("subscribe", topic)
+      .load()
+
+    // Extract and process data
+    val parsedDf = kafkaDf.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp", "topic", "partition", "offset")
+    //.withColumn("record_hash", sha2(concat_ws("|", $"key", $"value", $"timestamp", $"topic"), 256))
+    //.withColumn("record_id", concat($"record_hash", lit("_"), $"timestamp"))
+
+    // Data reconciliation logic (example: count records)
+    val count = parsedDf.count()
+
+    println(s"Total records between offsets: $count")
+
+    // Optionally write to disk for reconciliation output
+    //parsedDf.write.mode("overwrite").json("/Users/you/output/kafka-batch-data")
+    parsedDf.show(false)
+
+  }
+}
